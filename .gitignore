@@ -1,0 +1,33 @@
+# Node / server
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.env
+.env.local
+*.log
+
+# Runtime data — never commit the database or uploaded media
+server/data/
+server/uploads/
+server/data/simulator-auth.json
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/captures/
+android/*.iml
+android/app/*.iml
+*.apk
+*.aab
+*.keystore
+!debug.keystore
+
+# OS / editors
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

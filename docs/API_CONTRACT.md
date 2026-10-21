@@ -1,0 +1,242 @@
+# عقد API — Guardian Parental Control
+
+> العقد المرجعي الذي يجب أن يطابقه كل من **السيرفر** (`server/`) و**تطبيق الأندرويد** (`android/`).
+> أي انحراف عن هذا العقد يُعتبر خطأ. آخر تحديث: v1.
+
+## 1. عام
+
+- Base URL: `https://<vps-host>/api`
+- كل الاستجابات JSON عدا الملفات (multipart / binary).
+- ترميز: UTF-8.
+- Compression: يقبل `gzip` على الردود النصية.
+
+### 1.1 نموذج الأخطاء
+
+كل خطأ يرجع بنفس الشكل:
+
+```json
+{ "ok": false, "error": { "code": "INVALID_TOKEN", "message": "Token غير صالح" } }
+```
+
+| code | HTTP | المعنى |
+|---|---|---|
+| `BAD_REQUEST` | 400 | مدخلات ناقصة/غير صالحة |
+| `INVALID_TOKEN` | 401 | التوكن مفقود/منتهي/غير صالح |
+| `FORBIDDEN` | 403 | الجهاز غير مالك للمورد |
+| `NOT_FOUND` | 404 | غير موجود |
+| `CODE_INVALID` | 400 | كود التسجيل غير صحيح أو منتهي |
+| `CODE_USED` | 409 | الكود مستخدم مرة واحدة |
+| `RATE_LIMITED` | 429 | تجاوز حد الطلبات |
+| `INTERNAL` | 500 | خطأ داخلي |
+
+### 1.2 المصادقة
+
+ثلاثة أنماط، يمرر كل منها عبر `Authorization: Bearer <token>`:
+
+| الرمز | الاستخدام | المصدر |
+|---|---|---|
+| **Parent token** | لوحة تحكم الأب | تسجيل دخول `/api/auth/login` → JWT (HS256) صالح 30 يوماً، يُرسل أيضاً كـ cookie `pg_session` (httpOnly) |
+| **Device token** | تطبيق الأندرويد | يُمنح مرة واحدة عند التسجيل، JWT صالح 1 سنة، يُخزَّن في `SharedPreferences` |
+
+**ترويسات الـ Parent token:**
+- `Authorization: Bearer <jwt>` (للـ API)
+- cookie `pg_session=<jwt>` (للـ dashboard)
+
+**ترويسة الـ Device token:**
+- `Authorization: Device <token>` — ترويسة مستقلة ومقصودة
+- أو `Authorization: Bearer <token>` (بديل مقبول)
+
+> `Authorization: Bearer` يُفسَّر كـ **Parent token** بشكل افتراضي.
+> أي طلب على مسارات الجهاز (`/api/devices/*/...`) يُقبل فقط بـ Device token.
+
+### 1.3 WebSocket
+
+```
+ws://<host>/ws?token=<parent-token>
+ws://<host>/ws?token=<device-token>
+```
+
+- اتصال الـ parent يستقبل أحداث `device.*` لجميع أجهزته.
+- اتصال الـ device يستقبل إشعار `config.updated`.
+- الرسائل: `{ "type": "device.location", "deviceId": 3, "data": {...} }`
+- ping/pong كل 30 ثانية.
+
+---
+
+## 2. المصادقة — `/api/auth`
+
+### POST `/api/auth/register`
+```jsonc
+// req
+{ "email": "parent@example.com", "password": "Str0ngPass!", "name": "الأب" }
+// res 201
+{ "ok": true, "data": { "token": "<jwt>", "user": { "id":1, "email":"...", "name":"..." } } }
+```
+
+### POST `/api/auth/login`
+```jsonc
+// req
+{ "email": "parent@example.com", "password": "Str0ngPass!" }
+// res 200
+{ "ok": true, "data": { "token": "<jwt>", "user": {...} } }
+```
+
+### GET `/api/auth/me`
+→ `{ "ok": true, "data": { "user": {...} } }` (يحتاج Parent token)
+
+---
+
+## 3. الأجهزة — `/api/devices`
+
+### POST `/api/devices/enroll-code`  🔑 Parent token
+يولّد كود تسجيل من 8 أرقام صالح 10 دقائق.
+```jsonc
+// res 201
+{ "ok": true, "data": { "code": "48130277", "expiresAt": "2026-10-21T16:00:00.000Z" } }
+```
+
+### POST `/api/devices/register`  📱 بدون توكن (كود فقط)
+يُستدعى مرة واحدة من تطبيق الأندرويد. يستهلك الكود.
+```jsonc
+// req
+{
+  "code": "48130277",
+  "deviceName": "هاتف填报",
+  "manufacturer": "Samsung",
+  "model": "SM-A125F",
+  "androidVersion": "13",
+  "sdkInt": 33,
+  "appVersion": "1.0.0"
+}
+// res 200
+{ "ok": true, "data": {
+    "deviceId": 3,
+    "deviceToken": "<jwt-device>",
+    "serverUrl": "https://host/api"
+} }
+```
+- عند النجاح: `deviceId` يُربط بـ `userId` صاحب الكود، والجهاز يبدأ بـ `status: "active"`.
+
+### GET `/api/devices` 🔑 Parent
+```jsonc
+{ "ok": true, "data": [
+  { "id":3, "name":"...", "manufacturer":"Samsung", "model":"SM-A125F",
+    "androidVersion":"13", "status":"active", "lastSeen":"2026-10-21T15:50:00.000Z",
+    "battery": 76, "charging": false, "wifi": "Home-5G",
+    "location": { "lat":24.7136, "lng":46.6753, "accuracy":12, "at":"2026-10-21T15:49:00.000Z" } }
+]}
+```
+
+### GET `/api/devices/:id` 🔑 Parent → جهاز واحد
+### DELETE `/api/devices/:id` 🔑 Parent → يوقف الجهاز ويحذف الـ token (يبقى السجل للتقارير)
+
+---
+
+## 4. بيانات الجهاز (كلها 🔑 Device token، المسار تحت `/api/devices/:id/...`)
+
+> `:id` يجب أن يطابق الـ `deviceId` داخل الـ Device token، وإلا `FORBIDDEN`.
+
+### POST `/api/devices/:id/heartbeat`
+```jsonc
+// req
+{ "battery": 76, "charging": false, "wifi": "Home-5G",
+  "networkType": "wifi", "storageFreeMb": 12000, "uptimeSeconds": 5400,
+  "screenOn": true, "appVersion": "1.0.0" }
+// res 200 → { "ok": true, "data": { "serverTime": "...", "config": { "locationIntervalSec": 60, "usageIntervalSec": 300 } } }
+```
+
+### POST `/api/devices/:id/location`
+```jsonc
+// req
+{ "lat": 24.7136, "lng": 46.6753, "accuracy": 12, "speed": 1.4,
+  "altitude": 612, "bearing": 90, "provider": "gps", "battery": 76,
+// res 200
+{ "ok": true, "data": { "id": 991, "at": "2026-10-21T15:49:00.000Z" } }
+```
+
+### POST `/api/devices/:id/events`
+نوع واحد شامل لتقارير الاستخدام (app usage).
+```jsonc
+// req
+{ "type": "app_usage",
+  "package": "com.instagram.android",
+  "label": "Instagram",
+  "durationMs": 540000,
+  "openedAt": "2026-10-21T15:40:00.000Z",
+  "foreground": true }
+// res 200
+{ "ok": true, "data": { "id": 812 } }
+```
+
+`type` المدعوم: `app_usage`, `app_installed`, `app_removed`, `browser_history`, `notification`, `custom`.
+
+### POST `/api/devices/:id/calls`
+```jsonc
+// req
+{ "number": "+966500000000", "contactName": "أحمد", "type": "incoming",
+  "durationSec": 125, "at": "2026-10-21T15:30:00.000Z" }
+// type: incoming | outgoing | missed
+```
+
+### POST `/api/devices/:id/sms`
+```jsonc
+// req
+{ "address": "+966500000000", "body": "مرحبا", "type": "inbox", "at": "..." }
+// type: inbox | sent | draft
+```
+
+### POST `/api/devices/:id/screenshots`  📎 multipart
+`file` = صورة PNG/JPG، `meta` = JSON string اختياري `{ "app":"com.x", "label":"Chrome" }`.
+```jsonc
+// res 201
+{ "ok": true, "data": { "id": 55, "kind": "screenshot",
+  "url": "/api/devices/3/media/55", "size": 482113, "at": "..." } }
+```
+
+### POST `/api/devices/:id/photos` 📎 multipart
+نفس الشكل لكن `kind: "camera"`.
+
+### POST `/api/devices/:id/apps` — قائمة التطبيقات المثبتة
+```jsonc
+// req
+{ "apps": [ { "package":"com.x", "label":"X", "version":"1.0", "system": false, "installedAt": "..." } ] }
+```
+
+---
+
+## 5. قراءة البيانات — Parent token
+
+| المسار | الوصف | query params |
+|---|---|---|
+| `GET /api/devices/:id/location` | آخر موقع | — |
+| `GET /api/devices/:id/locations` | مسار زمني | `from`, `to` (ISO), `limit` (افتراضي 500) |
+| `GET /api/devices/:id/usage` | usage مجمّع بالتطبيق | `from`, `to`, `limit` |
+| `GET /api/devices/:id/calls` | سجل المكالمات | `from`, `to`, `limit` |
+| `GET /api/devices/:id/sms` | الرسائل | `from`, `to`, `limit` |
+| `GET /api/devices/:id/apps` | التطبيقات المثبتة | — |
+| `GET /api/devices/:id/media` | الوسائط | `kind` (screenshot/camera), `from`, `to`, `limit` |
+| `GET /api/devices/:id/media/:mediaId` | تنزيل ملف | — |
+| `GET /api/devices/:id/timeline` | جدول زمني موحّد لكل الأحداث | `from`, `to`, `limit` |
+| `GET /api/devices/:id/stats` | إحصائيات اليوم/الأسبوع | — |
+
+---
+
+## 6. قواعد الترقيم (Pagination)
+
+كل رد قراءة，含 `limit`:
+```jsonc
+{ "ok": true, "data": [ ... ], "meta": { "count": 42, "limit": 500 } }
+```
+
+---
+
+## 7. تقييد المعدل (Rate limiting)
+
+- مسارات `/api/auth/*`: 10 طلبات / 15 دقيقة لكل IP.
+- مسارات الجهاز: 600 طلب / دقيقة لكل جهاز.
+- الرد عند التجاوز: HTTP 429 + `Retry-After` header.
+
+## 8. CORS
+
+- `Access-Control-Allow-Origin` = `*` (الـ API背后的ه device apps لا CORS، والـ dashboard same-origin).
+- تُقبل جميع methods والـ headers مع `OPTIONS` preflight.

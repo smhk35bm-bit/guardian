@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Notification icon: a simple white shield. Notification icons must be
+  white on a transparent background, the system tints them anyway.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,2L4,5v6.1c0,4.87 3.41,9.42 8,10.9c4.59,-1.48 8,-6.03 8,-10.9V5L12,2zM12,4.2l6,2.2v4.7c0,3.72 -2.5,7.2 -6,8.6c-3.5,-1.4 -6,-4.88 -6,-8.6V6.4L12,4.2z" />
+</vector>

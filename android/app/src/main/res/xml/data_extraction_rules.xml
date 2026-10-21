@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Same rule as backup_rules.xml but for the Android 12+ data extraction
+  (cloud backup and device to device transfer).
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="guardian_prefs.xml" />
+        <exclude domain="file" path="pending_media" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="guardian_prefs.xml" />
+        <exclude domain="file" path="pending_media" />
+    </device-transfer>
+</data-extraction-rules>

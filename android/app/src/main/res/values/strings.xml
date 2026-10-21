@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <string name="app_name">Guardian — المراقبة العائلية</string>
+    <string name="app_short_name">Guardian</string>
+
+    <!-- ================= Notification ================= -->
+    <string name="notif_channel_name">المراقبة النشطة</string>
+    <string name="notif_channel_description">إشعار دائم يوضّح أن المراقبة العائلية قيد التشغيل على هذا الجهاز</string>
+    <string name="notif_title">Guardian — المراقبة فعّالة</string>
+    <string name="notif_text">مراقبة الجهاز «%1$s» قيد التشغيل، وتُرسل البيانات إلى لوحة تحكم الأهل</string>
+
+    <!-- ================= Enrollment ================= -->
+    <string name="enroll_title">ربط الجهاز</string>
+    <string name="enroll_disclosure">تنبيه مهم: هذا التطبيق يجمع الموقع الحالي، واستخدام التطبيقات، وسجلّ المكالمات، والرسائل النصية، ولقطات الشاشة، وصور الكاميرا، ثم يرسلها إلى لوحة تحكم الأهل على خادم وليّ الأمر.\n\nشروط الاستخدام:\n• يُربط الجهاز بموافقة صريحة من وليّ الأمر.\n• يبقى إشعار دائم غير قابل للإخفاء في شريط الحالة طوال فترة عمل التطبيق.\n• يستطيع المستخدم في أي وقت فتح التطبيق لمعرفة حالة المراقبة، وإيقاف الخدمة، وإلغاء الربط.\n• لا يحتوي التطبيق على أي أدوات لإخفاء نفسه أو لإخفاء آثاره.</string>
+    <string name="enroll_server_url">عنوان خادم وليّ الأمر</string>
+    <string name="enroll_server_hint">https://vps.example.com/api</string>
+    <string name="enroll_code">كود الربط (8 أرقام)</string>
+    <string name="enroll_button">اربط الجهاز</string>
+    <string name="enroll_progress">جارٍ الربط…</string>
+    <string name="enroll_privacy_note">اسم التطبيق في قائمة التطبيقات هو «Guardian — المراقبة العائلية»، ويظهر أيضًا في شريط الحالة أثناء التشغيل.</string>
+
+    <!-- ================= Errors ================= -->
+    <string name="error_url_empty">أدخل عنوان الخادم</string>
+    <string name="error_url_invalid">عنوان الخادم غير صالح</string>
+    <string name="error_code_invalid">كود الربط يجب أن يتكوّن من 8 أرقام</string>
+    <string name="error_network">تعذّر الاتصال بالخادم، تحقّق من الإنترنت ومن عنوان الخادم</string>
+    <string name="error_generic">حدث خطأ غير متوقع</string>
+    <string name="error_no_pairing">الجهاز غير مرتبط بعد</string>
+
+    <!-- ================= Main screen ================= -->
+    <string name="main_title">Guardian</string>
+    <string name="main_disclosure">المراقبة فعّالة. يرسل التطبيق الموقع واستخدام التطبيقات والمكالمات والرسائل ولقطات الشاشة (عند تفعيلها) إلى لوحة تحكم الأهل. يمكنك إيقاف كل ذلك من «إلغاء الربط» في الإعدادات.</string>
+    <string name="status_server_online">الخادم: متصل</string>
+    <string name="status_server_offline">الخادم: غير متصل</string>
+    <string name="status_server_unknown">الخادم: لم يتم الاتصال بعد</string>
+    <string name="status_last_update">آخر إرسال: %1$s</string>
+    <string name="status_never">لم يتم الإرسال بعد</string>
+    <string name="status_device">الجهاز: %1$s (المعرّف %2$d)</string>
+    <string name="status_queued">في قائمة الانتظار: %1$d عنصر</string>
+    <string name="status_running">خدمة المراقبة: تعمل</string>
+    <string name="status_stopped">خدمة المراقبة: متوقفة</string>
+    <string name="section_collectors">المُجمِّعات المفعّلة</string>
+    <string name="button_send_now">إرسال الآن</string>
+    <string name="button_relink">إعادة الربط</string>
+    <string name="button_permissions">الأذونات</string>
+    <string name="button_settings">الإعدادات</string>
+    <string name="token_expired">انتهت صلاحية التوكن — يُرجى إعادة الربط</string>
+    <string name="sent_now">تم طلب جمع البيانات وإرسالها</string>
+
+    <!-- ================= Collectors ================= -->
+    <string name="collector_location">الموقع</string>
+    <string name="collector_location_desc">يحدّث الموقع الحالي عبر GPS والشبكة.</string>
+    <string name="collector_usage">استخدام التطبيقات</string>
+    <string name="collector_usage_desc">المدة التي يقضيها المستخدم داخل كل تطبيق.</string>
+    <string name="collector_apps">التطبيقات المثبتة</string>
+    <string name="collector_apps_desc">قائمة التطبيقات المثبتة مع إصداراتها.</string>
+    <string name="collector_calls">سجلّ المكالمات</string>
+    <string name="collector_calls_desc">المكالمات الواردة والصادرة والمفقودة.</string>
+    <string name="collector_sms">الرسائل النصية</string>
+    <string name="collector_sms_desc">محتوى الرسائل الواردة والصادرة.</string>
+    <string name="collector_screenshot">لقطة الشاشة</string>
+    <string name="collector_screenshot_desc">لا يمكن التقاط الشاشة إلا بموافقة صريحة من المستخدم في كل جلسة.</string>
+    <string name="collector_camera">كاميرا الجهاز</string>
+    <string name="collector_camera_desc">معطّلة افتراضيًا. عند تفعيلها يلتقط التطبيق صورة واحدة بالكاميرا في كل دورة.</string>
+    <string name="collector_heartbeat">حالة الجهاز</string>
+    <string name="collector_heartbeat_desc">البطارية والشحن والشبكة والمساحة الحرة ومدة التشغيل.</string>
+    <string name="interval_label">الفاصل بالثواني</string>
+
+    <!-- ================= Permissions ================= -->
+    <string name="permissions_title">الأذونات</string>
+    <string name="permissions_intro">يحتاج التطبيق إلى الأذونات التالية ليعمل. جميعها تُمنح من قِبل المستخدم، ويمكن سحبها في أي وقت من إعدادات النظام.</string>
+    <string name="perm_notifications">إشعارات التطبيق</string>
+    <string name="perm_notifications_desc">يعرض الإشعار الدائم الذي يوضّح أن المراقبة نشطة.</string>
+    <string name="perm_location">الموقع الدقيق</string>
+    <string name="perm_location_desc">لتحديد موقع الجهاز عبر GPS.</string>
+    <string name="perm_background_location">الموقع في الخلفية</string>
+    <string name="perm_background_location_desc">يسمح بتحديد الموقع عندما لا يكون التطبيق في المقدمة.</string>
+    <string name="perm_usage">الوصول إلى بيانات الاستخدام</string>
+    <string name="perm_usage_desc">إذن خاص يُمنح من إعدادات النظام.</string>
+    <string name="perm_call_log">سجلّ المكالمات</string>
+    <string name="perm_call_log_desc">لقراءة سجلّ المكالمات.</string>
+    <string name="perm_sms">الرسائل النصية</string>
+    <string name="perm_sms_desc">لقراءة الرسائل النصية.</string>
+    <string name="perm_contacts">جهات الاتصال</string>
+    <string name="perm_contacts_desc">لعرض اسم صاحب رقم الهاتف.</string>
+    <string name="perm_camera">الكاميرا</string>
+    <string name="perm_camera_desc">لالتقاط صورة واحدة بالكاميرا عند تفعيل هذه الميزة.</string>
+    <string name="perm_screen_capture">التقاط الشاشة</string>
+    <string name="perm_screen_capture_desc">يعرض النظام نافذة موافقة صريحة، ولا يمكن الالتقاط بدونها.</string>
+    <string name="perm_granted">ممنوح</string>
+    <string name="perm_denied">غير ممنوح</string>
+    <string name="perm_action_grant">منح</string>
+    <string name="perm_action_settings">فتح الإعدادات</string>
+    <string name="perm_action_start">ابدأ</string>
+    <string name="perm_action_stop">إيقاف</string>
+    <string name="screen_capture_started">تم منح إذن التقاط الشاشة</string>
+    <string name="screen_capture_stopped">تم إيقاف التقاط الشاشة</string>
+
+    <!-- ================= Settings ================= -->
+    <string name="settings_title">الإعدادات</string>
+    <string name="settings_server_url">عنوان الخادم</string>
+    <string name="settings_server_url_desc">يُقبل مع «/api» أو بدونها.</string>
+    <string name="settings_device_name">اسم الجهاز</string>
+    <string name="settings_device_name_desc">الاسم الذي يظهر في لوحة تحكم الأهل.</string>
+    <string name="settings_save">حفظ</string>
+    <string name="settings_saved">تم الحفظ</string>
+    <string name="settings_queue">قائمة الانتظار المحلية</string>
+    <string name="settings_clear_queue">حذف قائمة الانتظار</string>
+    <string name="settings_queue_cleared">تم حذف قائمة الانتظار</string>
+    <string name="settings_camera_section">كاميرا الجهاز</string>
+    <string name="settings_camera_note">إرسال صور الكاميرا معطّل افتراضيًا. فعّله فقط بعد موافقة المستخدم الصريحة، ويمكن إيقافه فورًا.</string>
+    <string name="settings_unpair">إلغاء الربط من هذا الجهاز</string>
+    <string name="settings_unpair_confirm">سيتوقف التطبيق عن إرسال أي بيانات نهائيًا. هل تريد المتابعة؟</string>
+    <string name="settings_unpaired">تم إلغاء الربط</string>
+
+</resources>

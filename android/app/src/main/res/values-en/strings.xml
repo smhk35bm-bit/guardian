@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <string name="app_name">Guardian — Parental Monitoring</string>
+    <string name="app_short_name">Guardian</string>
+
+    <!-- ================= Notification ================= -->
+    <string name="notif_channel_name">Active monitoring</string>
+    <string name="notif_channel_description">Permanent notification stating that the parental monitoring is running on this device</string>
+    <string name="notif_title">Guardian — Monitoring is active</string>
+    <string name="notif_text">Monitoring \"%1$s\" is running, data is sent to the parent dashboard</string>
+
+    <!-- ================= Enrollment ================= -->
+    <string name="enroll_title">Pair this device</string>
+    <string name="enroll_disclosure">Important notice: this app collects the current location, app usage, the call log, text messages, screenshots and camera photos, and sends them to the parent dashboard on the parent server.\n\nTerms of use:\n• The device is paired with the explicit consent of the parent.\n• A permanent, non dismissable notification stays in the status bar while the app runs.\n• The user can open the app at any time to see the monitoring status, stop the service and unpair the device.\n• The app contains no mechanism to hide itself or to hide its traces.</string>
+    <string name="enroll_server_url">Parent server address</string>
+    <string name="enroll_server_hint">https://vps.example.com/api</string>
+    <string name="enroll_code">Pairing code (8 digits)</string>
+    <string name="enroll_button">Pair device</string>
+    <string name="enroll_progress">Pairing…</string>
+    <string name="enroll_privacy_note">The launcher name of the app is \"Guardian — Parental Monitoring\" and it is shown in the status bar while it runs.</string>
+
+    <!-- ================= Errors ================= -->
+    <string name="error_url_empty">Please enter the server address</string>
+    <string name="error_url_invalid">Invalid server address</string>
+    <string name="error_code_invalid">The pairing code must contain 8 digits</string>
+    <string name="error_network">Could not reach the server, check the internet connection and the server address</string>
+    <string name="error_generic">An unexpected error occurred</string>
+    <string name="error_no_pairing">The device is not paired yet</string>
+
+    <!-- ================= Main screen ================= -->
+    <string name="main_title">Guardian</string>
+    <string name="main_disclosure">Monitoring is active. The app sends the location, app usage, calls, messages and screenshots (when enabled) to the parent dashboard. You can stop everything with \"Unpair\" in the settings.</string>
+    <string name="status_server_online">Server: connected</string>
+    <string name="status_server_offline">Server: offline</string>
+    <string name="status_server_unknown">Server: not contacted yet</string>
+    <string name="status_last_update">Last upload: %1$s</string>
+    <string name="status_never">Nothing has been uploaded yet</string>
+    <string name="status_device">Device: %1$s (id %2$d)</string>
+    <string name="status_queued">Queued locally: %1$d item(s)</string>
+    <string name="status_running">Monitoring service: running</string>
+    <string name="status_stopped">Monitoring service: stopped</string>
+    <string name="section_collectors">Enabled collectors</string>
+    <string name="button_send_now">Send now</string>
+    <string name="button_relink">Re-pair</string>
+    <string name="button_permissions">Permissions</string>
+    <string name="button_settings">Settings</string>
+    <string name="token_expired">The token expired — please pair the device again</string>
+    <string name="sent_now">Collection and upload requested</string>
+
+    <!-- ================= Collectors ================= -->
+    <string name="collector_location">Location</string>
+    <string name="collector_location_desc">Updates the current position using GPS and the network.</string>
+    <string name="collector_usage">App usage</string>
+    <string name="collector_usage_desc">How long the user spends inside each app.</string>
+    <string name="collector_apps">Installed apps</string>
+    <string name="collector_apps_desc">List of the installed applications with their versions.</string>
+    <string name="collector_calls">Call log</string>
+    <string name="collector_calls_desc">Incoming, outgoing and missed calls.</string>
+    <string name="collector_sms">Text messages</string>
+    <string name="collector_sms_desc">Content of the incoming and sent messages.</string>
+    <string name="collector_screenshot">Screenshots</string>
+    <string name="collector_screenshot_desc">A screen can only be captured with an explicit user consent in every session.</string>
+    <string name="collector_camera">Device camera</string>
+    <string name="collector_camera_desc">Disabled by default. When enabled the app takes a single photo with the camera per cycle.</string>
+    <string name="collector_heartbeat">Device health</string>
+    <string name="collector_heartbeat_desc">Battery, charging, network, free storage and uptime.</string>
+    <string name="interval_label">Interval in seconds</string>
+
+    <!-- ================= Permissions ================= -->
+    <string name="permissions_title">Permissions</string>
+    <string name="permissions_intro">The app needs the following permissions to work. They are always granted by the user and can be revoked at any time from the system settings.</string>
+    <string name="perm_notifications">App notifications</string>
+    <string name="perm_notifications_desc">Shows the permanent notification that states the monitoring is active.</string>
+    <string name="perm_location">Precise location</string>
+    <string name="perm_location_desc">To determine the position of the device using GPS.</string>
+    <string name="perm_background_location">Background location</string>
+    <string name="perm_background_location_desc">Allows locating the device while the app is not in the foreground.</string>
+    <string name="perm_usage">Usage access</string>
+    <string name="perm_usage_desc">A special permission granted from the system settings.</string>
+    <string name="perm_call_log">Call log</string>
+    <string name="perm_call_log_desc">To read the call log.</string>
+    <string name="perm_sms">Text messages</string>
+    <string name="perm_sms_desc">To read the text messages.</string>
+    <string name="perm_contacts">Contacts</string>
+    <string name="perm_contacts_desc">To show the name behind a phone number.</string>
+    <string name="perm_camera">Camera</string>
+    <string name="perm_camera_desc">To take a single photo with the camera when the feature is enabled.</string>
+    <string name="perm_screen_capture">Screen capture</string>
+    <string name="perm_screen_capture_desc">The system shows an explicit consent dialog, a capture is impossible without it.</string>
+    <string name="perm_granted">granted</string>
+    <string name="perm_denied">not granted</string>
+    <string name="perm_action_grant">Grant</string>
+    <string name="perm_action_settings">Open settings</string>
+    <string name="perm_action_start">Start</string>
+    <string name="perm_action_stop">Stop</string>
+    <string name="screen_capture_started">Screen capture consent granted</string>
+    <string name="screen_capture_stopped">Screen capture stopped</string>
+
+    <!-- ================= Settings ================= -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_server_url">Server address</string>
+    <string name="settings_server_url_desc">Accepted with or without the \"/api\" suffix.</string>
+    <string name="settings_device_name">Device name</string>
+    <string name="settings_device_name_desc">The name shown in the parent dashboard.</string>
+    <string name="settings_save">Save</string>
+    <string name="settings_saved">Saved</string>
+    <string name="settings_queue">Local retry queue</string>
+    <string name="settings_clear_queue">Clear the queue</string>
+    <string name="settings_queue_cleared">The queue has been cleared</string>
+    <string name="settings_camera_section">Device camera</string>
+    <string name="settings_camera_note">Camera uploads are disabled by default. Enable them only after an explicit consent of the user; they can be stopped at any time.</string>
+    <string name="settings_unpair">Unpair this device</string>
+    <string name="settings_unpair_confirm">The app will stop sending any data for good. Do you want to continue?</string>
+    <string name="settings_unpaired">The device has been unpaired</string>
+
+</resources>

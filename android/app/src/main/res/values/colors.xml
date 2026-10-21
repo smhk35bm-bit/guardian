@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="guardian_primary">#1B5E9E</color>
+    <color name="guardian_primary_dark">#123F6C</color>
+    <color name="guardian_accent">#E8871A</color>
+    <color name="guardian_background">#F5F7FA</color>
+    <color name="guardian_surface">#FFFFFF</color>
+    <color name="guardian_text_primary">#12202E</color>
+    <color name="guardian_text_secondary">#4A5A6A</color>
+    <color name="guardian_warning">#B3261E</color>
+    <color name="guardian_ok">#1B7A3E</color>
+    <color name="guardian_launcher_background">#1B5E9E</color>
+    <color name="guardian_notification_icon">#FFFFFF</color>
+</resources>

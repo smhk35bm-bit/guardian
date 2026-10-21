@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The pairing token and the collected data must never leave the device through
+  a cloud backup, therefore the preferences and the pending media folder are
+  excluded.
+-->
+<full-backup-content>
+    <exclude domain="sharedpref" path="guardian_prefs.xml" />
+    <exclude domain="file" path="pending_media" />
+</full-backup-content>
