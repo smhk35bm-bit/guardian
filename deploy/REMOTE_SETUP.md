@@ -264,8 +264,11 @@ journalctl -u guardian -f
 # إعادة التشغيل بعد تعديل
 sudo systemctl restart guardian
 
-# تحديث الكود
-cd /opt/guardian && sudo rsync -a --exclude node_modules --exclude data --exclude uploads \
+# تحديث الكود — سكربت التثبيت ينسخ الجديد ويعيد التشغيل
+cd /opt/guardian && sudo ./deploy/setup.sh
+
+# أو يدوياً:
+sudo rsync -a --delete --exclude node_modules --exclude data --exclude uploads \
   --exclude .env /tmp/guardian-upload/server/ /opt/guardian/server/
 sudo systemctl restart guardian
 ```
@@ -273,7 +276,7 @@ sudo systemctl restart guardian
 ### النسخ الاحتياطي (مهم)
 
 ```bash
-sudo install -m 755 /tmp/guardian-upload/deploy/backup.sh /usr/local/bin/guardian-backup
+sudo install -m 755 /opt/guardian/deploy/backup.sh /usr/local/bin/guardian-backup
 sudo crontab -e
 # أضف السطر التالي:
 15 3 * * * /usr/local/bin/guardian-backup >> /var/log/guardian-backup.log 2>&1

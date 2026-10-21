@@ -63,6 +63,10 @@ rsync -a --delete \
 mkdir -p "$GUARDIAN_DIR/server/data" "$GUARDIAN_DIR/server/uploads"
 chown -R "$SERVICE_USER:$SERVICE_USER" "$GUARDIAN_DIR"
 
+# The deploy folder travels with the installation, so that the app can be
+# updated and re-installed from /opt/guardian without the upload folder.
+rsync -a --delete "$SOURCE_DIR/deploy/" "$GUARDIAN_DIR/deploy/"
+
 log "Installing npm dependencies"
 cd "$GUARDIAN_DIR/server"
 sudo -u "$SERVICE_USER" npm ci --omit=dev --no-audit --no-fund 2>/dev/null ||
