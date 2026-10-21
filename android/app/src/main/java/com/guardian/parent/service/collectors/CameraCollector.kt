@@ -3,6 +3,7 @@ package com.guardian.parent.service.collectors
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.graphics.ImageFormat
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
@@ -21,6 +22,7 @@ import com.guardian.parent.core.Logger
 import com.guardian.parent.core.TimeFmt
 import com.guardian.parent.data.CollectedItem
 import com.guardian.parent.data.ItemKind
+import com.guardian.parent.service.MonitorService
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -73,6 +75,10 @@ class CameraCollector(private val context: Context) : Collector {
 
     @Suppress("DEPRECATION")
     private suspend fun capturePhoto(): ByteArray? {
+        // Android 14 only allows the camera to be opened while the foreground
+        // service runs with the matching type.
+        MonitorService.ensureForegroundType(ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA)
+
         val manager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
             ?: return null
         val cameraId = selectCamera(manager) ?: run {

@@ -2,7 +2,6 @@ package com.guardian.parent.ui
 
 import android.Manifest
 import android.content.Intent
-import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
@@ -11,13 +10,13 @@ import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.IntentCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.guardian.parent.R
 import com.guardian.parent.core.Logger
 import com.guardian.parent.core.Permissions
 import com.guardian.parent.service.MediaProjectionHolder
+import com.guardian.parent.service.MonitorService
 import com.guardian.parent.ui.adapters.PermissionAction
 import com.guardian.parent.ui.adapters.PermissionAdapter
 import com.guardian.parent.ui.adapters.PermissionRow
@@ -47,22 +46,25 @@ class PermissionActivity : AppCompatActivity() {
     private val projectionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        if (result.resultCode == RESULT_OK && result.data != null) {
+        val data = result.data
+        if (result.resultCode == RESULT_OK && data != null) {
             try {
-                val projection = createProjection(result.resultCode, result.data!!)
-                if (projection != null) {
-                    // Android 14 requires the callback to be registered before
-                    // a virtual display may be created.
-                    MediaProjectionHolder.registerCallback(projection)
-                    MediaProjectionHolder.attach(projection)
-                    Toast.makeText(this, R.string.screen_capture_started, Toast.LENGTH_SHORT)
-                        .show()
-                }
+                // The consent is only stored here. Since Android 14 the
+                // projection may be created by a foreground service of the
+                // type `mediaProjection`, so the service picks it up.
+                MediaProjectionHolder.storeConsent(result.resultCode, data)
+                MonitorService.startWithProjection(this)
+                Toast.makeText(this, R.string.screen_capture_started, Toast.LENGTH_SHORT).show()
             } catch (t: Throwable) {
                 Logger.e("Unable to start the screen capture", t)
             }
         }
         refresh()
+    }
+
+    /** Follows the state of the screen capture consent. */
+    private val projectionListener: (Boolean) -> Unit = { _ ->
+        runOnUiThread { refresh() }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -73,6 +75,18 @@ class PermissionActivity : AppCompatActivity() {
         val list: RecyclerView = findViewById(R.id.permissionList)
         list.layoutManager = LinearLayoutManager(this)
         list.adapter = adapter
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // The service creates the projection, therefore the row has to follow
+        // the state of the holder instead of a local flag.
+        MediaProjectionHolder.addListener(projectionListener)
+    }
+
+    override fun onStop() {
+        MediaProjectionHolder.removeListener(projectionListener)
+        super.onStop()
     }
 
     override fun onResume() {
@@ -254,33 +268,6 @@ class PermissionActivity : AppCompatActivity() {
     }
 
     /**
-     * Builds the [MediaProjection] out of the consent result.
-     *
-     * Android 14 introduced [MediaProjectionManager.getMediaProjection]; before
-     * that the projection was handed over as a parcelable extra of the result
-     * intent. Both paths are implemented so the app works on every supported
-     * version.
-     */
-    private fun createProjection(resultCode: Int, data: Intent): MediaProjection? {
-        val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
-            ?: return null
-        return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                manager.getMediaProjection(resultCode, data)
-            } else {
-                IntentCompat.getParcelableExtra(
-                    data,
-                    EXTRA_MEDIA_PROJECTION,
-                    MediaProjection::class.java
-                )
-            }
-        } catch (t: Throwable) {
-            Logger.e("Unable to read the media projection from the consent result", t)
-            null
-        }
-    }
-
-    /**
      * Starts or stops the screen capture.
      *
      * The consent itself is shown by the system, the app cannot capture
@@ -301,14 +288,5 @@ class PermissionActivity : AppCompatActivity() {
             Logger.e("Unable to ask for the screen capture consent", t)
             Toast.makeText(this, R.string.error_generic, Toast.LENGTH_SHORT).show()
         }
-    }
-
-    companion object {
-        /**
-         * The extra the platform used before Android 14 to hand the projection
-         * over. It is a compile time constant, so it is safe to inline it for
-         * the older releases.
-         */
-        private const val EXTRA_MEDIA_PROJECTION = "android.media.projection.extra.MEDIA_PROJECTION"
     }
 }

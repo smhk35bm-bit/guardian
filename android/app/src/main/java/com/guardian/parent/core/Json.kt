@@ -11,7 +11,7 @@ import org.json.JSONObject
  * JSON building a bit less error prone.
  */
 
-/** Builds a [JSONObject]; `null` values are stored as JSON `null`. */
+/** Builds a [JSONObject]. */
 fun jsonObject(build: JSONObject.() -> Unit): JSONObject {
     val obj = JSONObject()
     obj.build()
@@ -25,31 +25,6 @@ fun jsonArray(build: JSONArray.() -> Unit): JSONArray {
     return arr
 }
 
-fun JSONObject.putStringOrNull(key: String, value: String?): JSONObject {
-    put(key, value ?: JSONObject.NULL)
-    return this
-}
-
-fun JSONObject.putIntOrNull(key: String, value: Int?): JSONObject {
-    put(key, value ?: JSONObject.NULL)
-    return this
-}
-
-fun JSONObject.putLongOrNull(key: String, value: Long?): JSONObject {
-    put(key, value ?: JSONObject.NULL)
-    return this
-}
-
-fun JSONObject.putDoubleOrNull(key: String, value: Double?): JSONObject {
-    put(key, value ?: JSONObject.NULL)
-    return this
-}
-
-fun JSONObject.putBooleanOrNull(key: String, value: Boolean?): JSONObject {
-    put(key, value ?: JSONObject.NULL)
-    return this
-}
-
 /** Returns the string at [key] or `null` when it is absent, null or empty. */
 fun JSONObject.optStringOrNull(key: String): String? {
     if (!has(key) || isNull(key)) return null
@@ -57,26 +32,13 @@ fun JSONObject.optStringOrNull(key: String): String? {
     return if (value.isEmpty()) null else value
 }
 
+/** Returns the number at [key] or `null` when it is absent or null. */
 fun JSONObject.optLongOrNull(key: String): Long? {
     if (!has(key) || isNull(key)) return null
     return optLong(key)
 }
 
-fun JSONObject.optIntOrNull(key: String): Int? {
-    if (!has(key) || isNull(key)) return null
-    return optInt(key)
-}
-
-fun JSONObject.optDoubleOrNull(key: String): Double? {
-    if (!has(key) || isNull(key)) return null
-    return optDouble(key)
-}
-
-fun JSONObject.optBooleanOrNull(key: String): Boolean? {
-    if (!has(key) || isNull(key)) return null
-    return optBoolean(key)
-}
-
+/** Returns the object at [key] or `null` when it is absent or null. */
 fun JSONObject.optObjectOrNull(key: String): JSONObject? {
     if (!has(key) || isNull(key)) return null
     return optJSONObject(key)

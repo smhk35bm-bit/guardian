@@ -48,6 +48,10 @@ class Repo(context: Context) {
         val pending = store.loadQueue()
         val fresh = items.mapNotNull { persist(it) }
         val merged = (pending + fresh).takeLast(Config.MAX_QUEUE_ITEMS)
+        // The queue is bounded: the oldest entries fall out of it. Their
+        // media files are deleted, otherwise the storage would grow forever.
+        val dropped = (pending + fresh).dropLast(Config.MAX_QUEUE_ITEMS)
+        dropped.forEach { item -> item.mediaPath?.let { deleteQuietly(it) } }
         store.saveQueue(merged)
         return flushQueue()
     }
@@ -113,7 +117,7 @@ class Repo(context: Context) {
     /** Removes every queued payload (and its media file). */
     fun clearQueue() {
         store.loadQueue().forEach { item ->
-            item.mediaPath?.let { path -> runCatching { File(path).delete() } }
+            item.mediaPath?.let { path -> deleteQuietly(path) }
         }
         store.clearQueue()
         Logger.i("Local queue cleared")
@@ -198,5 +202,17 @@ class Repo(context: Context) {
     private fun extensionFor(mimeType: String?): String = when (mimeType) {
         "image/jpeg", "image/jpg" -> "jpg"
         else -> "png"
+    }
+
+    /** Deletes a media file without ever throwing. */
+    private fun deleteQuietly(path: String) {
+        try {
+            val file = File(path)
+            if (file.exists() && !file.delete()) {
+                Logger.w("Unable to delete the queued media file $path")
+            }
+        } catch (t: Throwable) {
+            Logger.w("Unable to delete the queued media file $path", t)
+        }
     }
 }

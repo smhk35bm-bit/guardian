@@ -16,6 +16,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!--
+      Android 14 (API 34) demands a dedicated permission for every foreground
+      service type. The camera and the media projection types are only used
+      while the corresponding feature is active and consented to.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
@@ -106,13 +113,16 @@
 
         <!--
           The monitoring runs in a foreground service with a permanent,
-          non dismissable notification. The location and dataSync types are
-          declared because the service reports the position and uploads data.
+          non dismissable notification. Android 14 requires the exact type of
+          every long running task to be declared: the service reports the
+          position (location), uploads the data (dataSync) and - only while the
+          user consented to it - takes pictures (camera) and captures the
+          screen (mediaProjection).
         -->
         <service
             android:name=".service.MonitorService"
             android:exported="false"
-            android:foregroundServiceType="location|dataSync" />
+            android:foregroundServiceType="location|dataSync|camera|mediaProjection" />
 
         <receiver
             android:name=".service.BootReceiver"

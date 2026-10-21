@@ -1,10 +1,14 @@
 package com.guardian.parent.service
 
+import android.app.Notification
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.media.projection.MediaProjection
+import android.media.projection.MediaProjectionManager
 import android.os.Build
 import androidx.core.app.ServiceCompat
+import androidx.core.content.IntentCompat
 import androidx.lifecycle.LifecycleService
 import com.guardian.parent.core.CollectorIds
 import com.guardian.parent.core.Config
@@ -63,6 +67,17 @@ class MonitorService : LifecycleService() {
 
     private var schedulerJob: Job? = null
 
+    /**
+     * The foreground service types that were requested at runtime.
+     *
+     * Android 14 refuses the camera and the screen capture while the service
+     * runs without the matching type, so the types are added the moment the
+     * corresponding feature is used and never taken away again (except when
+     * the permission behind them is revoked).
+     */
+    @Volatile
+    private var extraTypes: Int = 0
+
     private lateinit var locationCollector: LocationCollector
     private lateinit var usageCollector: UsageCollector
     private lateinit var appsCollector: InstalledAppsCollector
@@ -74,6 +89,7 @@ class MonitorService : LifecycleService() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         store = LocalStore(this)
         repo = Repo(this)
 
@@ -104,9 +120,17 @@ class MonitorService : LifecycleService() {
         promoteToForeground()
         startScheduler()
 
-        if (intent?.action == ACTION_COLLECT_NOW) {
-            // "Send now" button in the UI: run every enabled collector at once.
-            scope.launch { runAllCollectors() }
+        when (intent?.action) {
+            ACTION_COLLECT_NOW -> {
+                // "Send now" button in the UI: run every enabled collector at once.
+                scope.launch { runAllCollectors() }
+            }
+
+            ACTION_ATTACH_PROJECTION -> {
+                // The user granted the screen capture consent: the projection
+                // may now be created by the service itself.
+                scope.launch { attachProjection() }
+            }
         }
 
         UploadWorker.schedule(this)
@@ -116,8 +140,74 @@ class MonitorService : LifecycleService() {
     override fun onDestroy() {
         Logger.i("Guardian monitoring service stopped")
         isRunning = false
+        instance = null
         scope.cancel()
         super.onDestroy()
+    }
+
+    // ------------------------------------------------------------------
+    // Screen capture consent
+    // ------------------------------------------------------------------
+
+    /**
+     * Creates the screen capture projection out of the stored consent.
+     *
+     * Since Android 14 the projection may only be created while a foreground
+     * service of the type `mediaProjection` is running, therefore this code
+     * lives in the service and not in the Activity.
+     */
+    private suspend fun attachProjection() {
+        try {
+            val consent = MediaProjectionHolder.takeConsent()
+            if (consent == null) {
+                Logger.w("No screen capture consent is waiting")
+                return
+            }
+            val (resultCode, data) = consent
+
+            // The type has to be active before the projection is created.
+            addForegroundType(ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+
+            val projection = createProjection(resultCode, data)
+            if (projection == null) {
+                Logger.e("Unable to create the screen capture projection")
+                return
+            }
+
+            // Android 14 requires the callback before a virtual display may be
+            // created, so it is registered first.
+            MediaProjectionHolder.registerCallback(projection)
+            MediaProjectionHolder.attach(projection)
+        } catch (t: Throwable) {
+            Logger.e("Unable to start the screen capture", t)
+        }
+    }
+
+    /**
+     * Builds the [MediaProjection] out of the consent result.
+     *
+     * Android 14 introduced [MediaProjectionManager.getMediaProjection]; before
+     * that the projection was handed over as a parcelable extra of the result
+     * intent. Both paths are implemented so the app works on every supported
+     * version.
+     */
+    private fun createProjection(resultCode: Int, data: Intent): MediaProjection? {
+        val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
+            ?: return null
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                manager.getMediaProjection(resultCode, data)
+            } else {
+                IntentCompat.getParcelableExtra(
+                    data,
+                    EXTRA_MEDIA_PROJECTION,
+                    MediaProjection::class.java
+                )
+            }
+        } catch (t: Throwable) {
+            Logger.e("Unable to read the media projection from the consent result", t)
+            null
+        }
     }
 
     // ------------------------------------------------------------------
@@ -126,14 +216,46 @@ class MonitorService : LifecycleService() {
 
     private fun promoteToForeground() {
         val notification = Notifications.build(this, store.deviceName.ifBlank { deviceLabel() })
-        // Android 14 refuses the "location" type when the location permission
-        // is missing, therefore the type is chosen from the granted state.
-        val types = if (Permissions.locationGranted(this)) {
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-        } else {
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+        startForegroundWith(currentTypes(), notification)
+    }
+
+    /**
+     * The types the service currently runs with.
+     *
+     * The data sync type is always needed (the uploads), the location type is
+     * only valid while the location permission is granted and the camera and
+     * the media projection types are only added while they are really used.
+     */
+    private fun currentTypes(): Int {
+        var types = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+        if (Permissions.locationGranted(this)) {
+            types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
         }
+        if (extraTypes and ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA != 0 &&
+            Permissions.cameraGranted(this)
+        ) {
+            types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+        }
+        if (extraTypes and ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION != 0) {
+            types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+        }
+        return types
+    }
+
+    /** Adds a foreground service type and refreshes the notification. */
+    private fun addForegroundType(type: Int) {
+        if (extraTypes and type == type) return
+        extraTypes = extraTypes or type
+        promoteToForeground()
+    }
+
+    /**
+     * Starts (or updates) the foreground state of the service.
+     *
+     * Android 14 refuses a type that the app is not allowed to use, therefore
+     * the call falls back to the plain data sync type.
+     */
+    private fun startForegroundWith(types: Int, notification: Notification) {
         try {
             ServiceCompat.startForeground(this, Config.NOTIFICATION_ID, notification, types)
         } catch (e: Exception) {
@@ -264,12 +386,38 @@ class MonitorService : LifecycleService() {
     companion object {
         const val ACTION_COLLECT_NOW = "com.guardian.parent.action.COLLECT_NOW"
 
+        /** Asks the service to turn the stored consent into a projection. */
+        const val ACTION_ATTACH_PROJECTION = "com.guardian.parent.action.ATTACH_PROJECTION"
+
         private const val TICK_MS = 5_000L
+
+        /**
+         * The extra the platform used before Android 14 to hand the projection
+         * over. It is a compile time constant, so it is safe to inline it for
+         * the older releases.
+         */
+        private const val EXTRA_MEDIA_PROJECTION = "android.media.projection.extra.MEDIA_PROJECTION"
 
         /** Lets the UI show whether the monitoring service is currently alive. */
         @Volatile
         var isRunning: Boolean = false
             internal set
+
+        /** The running service, used to update the foreground service types. */
+        @Volatile
+        private var instance: MonitorService? = null
+
+        /**
+         * Adds a foreground service type to the running service.
+         *
+         * Android 14 refuses to open the camera or to capture the screen
+         * while the service runs without the matching type. The call is a
+         * no-op when the service is not running.
+         */
+        fun ensureForegroundType(type: Int) {
+            val service = instance ?: return
+            service.addForegroundType(type)
+        }
 
         /** Starts (or wakes up) the monitoring service. */
         fun start(context: Context) {
@@ -282,6 +430,24 @@ class MonitorService : LifecycleService() {
                 }
             } catch (t: Throwable) {
                 Logger.e("Unable to start the monitoring service", t)
+            }
+        }
+
+        /**
+         * Starts the service so that it can turn the stored screen capture
+         * consent into a real projection.
+         */
+        fun startWithProjection(context: Context) {
+            val intent = Intent(context, MonitorService::class.java)
+                .setAction(ACTION_ATTACH_PROJECTION)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (t: Throwable) {
+                Logger.e("Unable to start the monitoring service for the screen capture", t)
             }
         }
     }

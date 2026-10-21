@@ -25,15 +25,4 @@ object TimeFmt {
 
     /** Local, human readable timestamp used in the UI. */
     fun human(millis: Long): String = HUMAN.format(Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()))
-
-    /** "x minutes ago" style label used by the status card. */
-    fun relative(millis: Long, now: Long = System.currentTimeMillis()): String {
-        val deltaSeconds = ((now - millis) / 1000L).coerceAtLeast(0L)
-        return when {
-            deltaSeconds < 60L -> "$deltaSeconds s"
-            deltaSeconds < 3600L -> "${deltaSeconds / 60L} min"
-            deltaSeconds < 86400L -> "${deltaSeconds / 3600L} h"
-            else -> "${deltaSeconds / 86400L} d"
-        }
-    }
 }
