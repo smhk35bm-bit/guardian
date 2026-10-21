@@ -1,22 +1,20 @@
-import path from 'node:path';
-import fs from 'node:fs';
 import { Router } from 'express';
-import { q } from '../db.js';
-import { config } from '../config.js';
+import { q } from '../db/index.js';
+import { readMedia } from '../media.js';
 import { ok, fail, asyncHandler, parseLimit, parseRange, toInt } from '../lib/util.js';
 import { requireParent } from '../middleware/auth.js';
 
 export const dataRouter = Router();
 
 /** Every read endpoint is scoped to the requesting parent's own device. */
-function ownedDevice(req) {
+async function ownedDevice(req) {
   const id = Number.parseInt(req.params.id, 10);
   if (!Number.isFinite(id)) return null;
   return q.get('SELECT * FROM devices WHERE id = ? AND user_id = ?', id, req.user.id);
 }
 
-function guard(req, res) {
-  const device = ownedDevice(req);
+async function guard(req, res) {
+  const device = await ownedDevice(req);
   if (!device) {
     fail(res, 404, 'NOT_FOUND', 'الجهاز غير موجود');
     return null;
@@ -28,8 +26,8 @@ dataRouter.get(
   '/:id/location',
   requireParent,
   asyncHandler(async (req, res) => {
-    if (!guard(req, res)) return;
-    const loc = q.get(
+    if (!(await guard(req, res))) return;
+    const loc = await q.get(
       'SELECT * FROM locations WHERE device_id = ? ORDER BY at DESC LIMIT 1',
       req.params.id,
     );
@@ -41,10 +39,10 @@ dataRouter.get(
   '/:id/locations',
   requireParent,
   asyncHandler(async (req, res) => {
-    if (!guard(req, res)) return;
+    if (!(await guard(req, res))) return;
     const { from, to } = parseRange(req.query, 7);
     const limit = parseLimit(req.query.limit, 1000);
-    const rows = q.all(
+    const rows = await q.all(
       'SELECT * FROM locations WHERE device_id = ? AND at BETWEEN ? AND ? ORDER BY at DESC LIMIT ?',
       req.params.id,
       from,
@@ -59,10 +57,10 @@ dataRouter.get(
   '/:id/usage',
   requireParent,
   asyncHandler(async (req, res) => {
-    if (!guard(req, res)) return;
+    if (!(await guard(req, res))) return;
     const { from, to } = parseRange(req.query, 7);
     const limit = parseLimit(req.query.limit, 200);
-    const rows = q.all(
+    const rows = await q.all(
       `SELECT package,
               MAX(label)            AS label,
               SUM(duration_ms)      AS total_ms,
@@ -86,10 +84,10 @@ dataRouter.get(
   '/:id/calls',
   requireParent,
   asyncHandler(async (req, res) => {
-    if (!guard(req, res)) return;
+    if (!(await guard(req, res))) return;
     const { from, to } = parseRange(req.query, 7);
     const limit = parseLimit(req.query.limit, 300);
-    const rows = q.all(
+    const rows = await q.all(
       'SELECT * FROM calls WHERE device_id = ? AND at BETWEEN ? AND ? ORDER BY at DESC LIMIT ?',
       req.params.id,
       from,
@@ -104,10 +102,10 @@ dataRouter.get(
   '/:id/sms',
   requireParent,
   asyncHandler(async (req, res) => {
-    if (!guard(req, res)) return;
+    if (!(await guard(req, res))) return;
     const { from, to } = parseRange(req.query, 7);
     const limit = parseLimit(req.query.limit, 300);
-    const rows = q.all(
+    const rows = await q.all(
       'SELECT * FROM sms WHERE device_id = ? AND at BETWEEN ? AND ? ORDER BY at DESC LIMIT ?',
       req.params.id,
       from,
@@ -122,8 +120,8 @@ dataRouter.get(
   '/:id/apps',
   requireParent,
   asyncHandler(async (req, res) => {
-    if (!guard(req, res)) return;
-    const rows = q.all(
+    if (!(await guard(req, res))) return;
+    const rows = await q.all(
       'SELECT package, label, version, is_system, installed_at, at FROM installed_apps WHERE device_id = ? ORDER BY label COLLATE NOCASE',
       req.params.id,
     );
@@ -135,13 +133,13 @@ dataRouter.get(
   '/:id/media',
   requireParent,
   asyncHandler(async (req, res) => {
-    if (!guard(req, res)) return;
+    if (!(await guard(req, res))) return;
     const { from, to } = parseRange(req.query, 14);
     const limit = parseLimit(req.query.limit, 100);
     const kind = req.query.kind ? String(req.query.kind) : null;
 
     const rows = kind
-      ? q.all(
+      ? await q.all(
           'SELECT * FROM media WHERE device_id = ? AND kind = ? AND at BETWEEN ? AND ? ORDER BY at DESC LIMIT ?',
           req.params.id,
           kind,
@@ -149,7 +147,7 @@ dataRouter.get(
           to,
           limit,
         )
-      : q.all(
+      : await q.all(
           'SELECT * FROM media WHERE device_id = ? AND at BETWEEN ? AND ? ORDER BY at DESC LIMIT ?',
           req.params.id,
           from,
@@ -176,25 +174,20 @@ dataRouter.get(
   '/:id/media/:mediaId',
   requireParent,
   asyncHandler(async (req, res) => {
-    if (!guard(req, res)) return;
+    if (!(await guard(req, res))) return;
     const mediaId = toInt(req.params.mediaId);
     if (mediaId === null) return fail(res, 400, 'BAD_REQUEST', 'معرّف ملف غير صالح');
 
-    const item = q.get('SELECT * FROM media WHERE id = ? AND device_id = ?', mediaId, req.params.id);
-    if (!item) return fail(res, 404, 'NOT_FOUND', 'الملف غير موجود');
-
-    // filename is server-generated, but resolve+prefix check keeps a corrupted DB row
-    // from escaping the upload directory.
-    const filePath = path.resolve(config.uploadDir, path.basename(item.filename));
-    if (!filePath.startsWith(path.resolve(config.uploadDir))) {
-      return fail(res, 400, 'BAD_REQUEST', 'مسار ملف غير صالح');
+    const item = await readMedia(mediaId);
+    if (!item || String(item.buffer?.length ?? 0) === '0') {
+      return fail(res, 404, 'NOT_FOUND', 'الملف غير موجود');
     }
-    if (!fs.existsSync(filePath)) return fail(res, 404, 'NOT_FOUND', 'الملف غير موجود على القرص');
 
+    const ext = String(item.filename || '').split('.').pop() || 'bin';
     res.setHeader('Content-Type', item.mime || 'application/octet-stream');
-    res.setHeader('Content-Disposition', `inline; filename="${mediaId}.${path.extname(filePath).slice(1) || 'bin'}"`);
+    res.setHeader('Content-Disposition', `inline; filename="${mediaId}.${ext}"`);
     res.setHeader('Cache-Control', 'private, max-age=3600');
-    return fs.createReadStream(filePath).pipe(res);
+    return res.send(item.buffer);
   }),
 );
 
@@ -202,18 +195,33 @@ dataRouter.get(
   '/:id/timeline',
   requireParent,
   asyncHandler(async (req, res) => {
-    if (!guard(req, res)) return;
+    if (!(await guard(req, res))) return;
     const { from, to } = parseRange(req.query, 3);
     const limit = parseLimit(req.query.limit, 300);
     const deviceId = req.params.id;
 
-    const usage = q.all(
-      'SELECT id, at, package, label, duration_ms FROM app_usage WHERE device_id = ? AND at BETWEEN ? AND ? ORDER BY at DESC LIMIT ?',
-      deviceId,
-      from,
-      to,
-      limit,
-    ).map((r) => ({
+    // One round-trip for the four feeds — a remote database would otherwise
+    // need four separate requests.
+    const [usageRes, callRes, smsRes, eventRes] = await q.batch([
+      {
+        sql: 'SELECT id, at, package, label, duration_ms FROM app_usage WHERE device_id = ? AND at BETWEEN ? AND ? ORDER BY at DESC LIMIT ?',
+        args: [deviceId, from, to, limit],
+      },
+      {
+        sql: 'SELECT id, at, number, contact_name, call_type, duration_sec FROM calls WHERE device_id = ? AND at BETWEEN ? AND ? ORDER BY at DESC LIMIT ?',
+        args: [deviceId, from, to, limit],
+      },
+      {
+        sql: 'SELECT id, at, address, body, msg_type FROM sms WHERE device_id = ? AND at BETWEEN ? AND ? ORDER BY at DESC LIMIT ?',
+        args: [deviceId, from, to, limit],
+      },
+      {
+        sql: 'SELECT id, at, type, payload FROM events WHERE device_id = ? AND at BETWEEN ? AND ? ORDER BY at DESC LIMIT ?',
+        args: [deviceId, from, to, limit],
+      },
+    ]);
+
+    const usage = usageRes.rows.map((r) => ({
       id: `usage-${r.id}`,
       at: r.at,
       kind: 'app_usage',
@@ -222,13 +230,7 @@ dataRouter.get(
       durationMs: r.duration_ms,
     }));
 
-    const calls = q.all(
-      'SELECT id, at, number, contact_name, call_type, duration_sec FROM calls WHERE device_id = ? AND at BETWEEN ? AND ? ORDER BY at DESC LIMIT ?',
-      deviceId,
-      from,
-      to,
-      limit,
-    ).map((r) => ({
+    const calls = callRes.rows.map((r) => ({
       id: `call-${r.id}`,
       at: r.at,
       kind: 'call',
@@ -237,13 +239,7 @@ dataRouter.get(
       durationSec: r.duration_sec,
     }));
 
-    const messages = q.all(
-      'SELECT id, at, address, body, msg_type FROM sms WHERE device_id = ? AND at BETWEEN ? AND ? ORDER BY at DESC LIMIT ?',
-      deviceId,
-      from,
-      to,
-      limit,
-    ).map((r) => ({
+    const messages = smsRes.rows.map((r) => ({
       id: `sms-${r.id}`,
       at: r.at,
       kind: 'sms',
@@ -251,13 +247,7 @@ dataRouter.get(
       subtitle: r.body,
     }));
 
-    const events = q.all(
-      'SELECT id, at, type, payload FROM events WHERE device_id = ? AND at BETWEEN ? AND ? ORDER BY at DESC LIMIT ?',
-      deviceId,
-      from,
-      to,
-      limit,
-    ).map((r) => {
+    const events = eventRes.rows.map((r) => {
       let payload = {};
       try {
         payload = JSON.parse(r.payload || '{}');
@@ -284,51 +274,48 @@ dataRouter.get(
   '/:id/stats',
   requireParent,
   asyncHandler(async (req, res) => {
-    if (!guard(req, res)) return;
+    if (!(await guard(req, res))) return;
     const deviceId = req.params.id;
     const dayAgo = new Date(Date.now() - 86400_000).toISOString();
     const weekAgo = new Date(Date.now() - 7 * 86400_000).toISOString();
 
-    const screenToday = q.get(
-      'SELECT COALESCE(SUM(duration_ms), 0) AS total FROM app_usage WHERE device_id = ? AND at >= ?',
-      deviceId,
-      dayAgo,
-    );
-    const screenWeek = q.get(
-      'SELECT COALESCE(SUM(duration_ms), 0) AS total FROM app_usage WHERE device_id = ? AND at >= ?',
-      deviceId,
-      weekAgo,
-    );
-    const callsToday = q.get(
-      'SELECT COUNT(*) AS total FROM calls WHERE device_id = ? AND at >= ?',
-      deviceId,
-      dayAgo,
-    );
-    const callsWeek = q.get(
-      'SELECT COUNT(*) AS total FROM calls WHERE device_id = ? AND at >= ?',
-      deviceId,
-      weekAgo,
-    );
-    const locationsToday = q.get(
-      'SELECT COUNT(*) AS total FROM locations WHERE device_id = ? AND at >= ?',
-      deviceId,
-      dayAgo,
-    );
-    const topApps = q.all(
-      `SELECT package, MAX(label) AS label, SUM(duration_ms) AS total_ms
-         FROM app_usage WHERE device_id = ? AND at >= ?
-        GROUP BY package ORDER BY total_ms DESC LIMIT 10`,
-      deviceId,
-      weekAgo,
-    );
+    const [screenToday, screenWeek, callsToday, callsWeek, locationsToday, topAppsRes] =
+      await q.batch([
+        {
+          sql: 'SELECT COALESCE(SUM(duration_ms), 0) AS total FROM app_usage WHERE device_id = ? AND at >= ?',
+          args: [deviceId, dayAgo],
+        },
+        {
+          sql: 'SELECT COALESCE(SUM(duration_ms), 0) AS total FROM app_usage WHERE device_id = ? AND at >= ?',
+          args: [deviceId, weekAgo],
+        },
+        {
+          sql: 'SELECT COUNT(*) AS total FROM calls WHERE device_id = ? AND at >= ?',
+          args: [deviceId, dayAgo],
+        },
+        {
+          sql: 'SELECT COUNT(*) AS total FROM calls WHERE device_id = ? AND at >= ?',
+          args: [deviceId, weekAgo],
+        },
+        {
+          sql: 'SELECT COUNT(*) AS total FROM locations WHERE device_id = ? AND at >= ?',
+          args: [deviceId, dayAgo],
+        },
+        {
+          sql: `SELECT package, MAX(label) AS label, SUM(duration_ms) AS total_ms
+                  FROM app_usage WHERE device_id = ? AND at >= ?
+                 GROUP BY package ORDER BY total_ms DESC LIMIT 10`,
+          args: [deviceId, weekAgo],
+        },
+      ]);
 
     return ok(res, {
-      screenTimeTodayMs: screenToday.total,
-      screenTimeWeekMs: screenWeek.total,
-      callsToday: callsToday.total,
-      callsWeek: callsWeek.total,
-      locationsToday: locationsToday.total,
-      topApps,
+      screenTimeTodayMs: screenToday.rows[0]?.total ?? 0,
+      screenTimeWeekMs: screenWeek.rows[0]?.total ?? 0,
+      callsToday: callsToday.rows[0]?.total ?? 0,
+      callsWeek: callsWeek.rows[0]?.total ?? 0,
+      locationsToday: locationsToday.rows[0]?.total ?? 0,
+      topApps: topAppsRes.rows,
     });
   }),
 );

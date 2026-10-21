@@ -1,0 +1,42 @@
+# ============================================
+#  Guardian Parental Control — Render blueprint
+#  مجاني 100% — لا يحتاج أي بطاقة بنكية
+#
+#  الاستخدام: ارفع المشروع إلى GitHub ثم في Render:
+#    New  →  Blueprint  →  اختر المستودع  →  Apply
+# ============================================
+
+services:
+  - type: web
+    name: guardian-server
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm install --omit=dev
+    startCommand: node src/index.js
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # القرص في Render مؤقت — لذلك القاعدة والوسائط في Turso
+      - key: DB_DRIVER
+        value: libsql
+      - key: MEDIA_DRIVER
+        value: db
+      - key: LIBSQL_URL
+        sync: false        # من Turso: turso db show <name> --http-url
+      - key: LIBSQL_TOKEN
+        sync: false        # من Turso: turso db tokens create <name>
+      - key: JWT_SECRET
+        generateValue: true
+      - key: PUBLIC_URL
+        sync: false        # رابط Render بعد أول نشر
+      - key: MAX_UPLOAD_BYTES
+        value: "10485760"
+      - key: AUTH_RATE_LIMIT
+        value: "10"
+      - key: AUTH_RATE_WINDOW_MIN
+        value: "15"
+      - key: DEVICE_RATE_LIMIT
+        value: "600"

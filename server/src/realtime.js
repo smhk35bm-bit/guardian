@@ -1,6 +1,6 @@
 import { WebSocketServer } from 'ws';
 import { verifyToken } from './lib/jwt.js';
-import { q } from './db.js';
+import { q } from './db/index.js';
 
 const rooms = new Map(); // roomId -> Set<ws>
 const meta = new WeakMap(); // ws -> { kind, userId, deviceId }
@@ -37,7 +37,7 @@ export function broadcastToUser(userId, message) {
 export function attachRealtime(server) {
   const wss = new WebSocketServer({ server, path: '/ws' });
 
-  wss.on('connection', (ws, req) => {
+  wss.on('connection', async (ws, req) => {
     const url = new URL(req.url, 'http://localhost');
     const token = url.searchParams.get('token');
     const claims = token ? verifyToken(token) : null;
@@ -49,7 +49,7 @@ export function attachRealtime(server) {
     }
 
     if (claims.kind === 'parent') {
-      const user = q.get('SELECT id FROM users WHERE id = ?', claims.sub);
+      const user = await q.get('SELECT id FROM users WHERE id = ?', claims.sub);
       if (!user) {
         ws.close(4001, 'unknown user');
         return;
@@ -60,7 +60,10 @@ export function attachRealtime(server) {
     } else if (claims.kind === 'device') {
       // device_token must be selected here — it is compared against the
       // token's `jti` to detect a rotated (revoked) device credential.
-      const device = q.get('SELECT id, user_id, device_token FROM devices WHERE id = ?', claims.sub);
+      const device = await q.get(
+        'SELECT id, user_id, device_token FROM devices WHERE id = ?',
+        claims.sub,
+      );
       if (!device || device.device_token !== claims.jti) {
         ws.close(4001, 'unknown device');
         return;

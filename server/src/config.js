@@ -39,6 +39,29 @@ const UPLOAD_DIR = path.resolve(root, process.env.UPLOAD_DIR || './uploads');
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
+// --- storage topology -----------------------------------------------------
+// A normal VPS keeps everything on its disk (dbDriver=sqlite, mediaDriver=file).
+// A free PaaS host has an ephemeral disk, so the database moves to Turso
+// (libSQL over HTTP) and the media bytes move into the database as chunks.
+const libsqlUrl = process.env.LIBSQL_URL || process.env.TURSO_DATABASE_URL || '';
+const libsqlToken = process.env.LIBSQL_TOKEN || process.env.TURSO_AUTH_TOKEN || '';
+const dbDriver = (
+  process.env.DB_DRIVER || (libsqlUrl ? 'libsql' : 'sqlite')
+).toLowerCase();
+const mediaDriver = (
+  process.env.MEDIA_DRIVER || (dbDriver === 'libsql' ? 'db' : 'file')
+).toLowerCase();
+
+if (dbDriver === 'libsql' && !libsqlUrl) {
+  throw new Error('DB_DRIVER=libsql requires LIBSQL_URL (or TURSO_DATABASE_URL)');
+}
+if (!['sqlite', 'libsql'].includes(dbDriver)) {
+  throw new Error(`Unknown DB_DRIVER "${dbDriver}" — expected sqlite or libsql`);
+}
+if (!['file', 'db'].includes(mediaDriver)) {
+  throw new Error(`Unknown MEDIA_DRIVER "${mediaDriver}" — expected file or db`);
+}
+
 export const config = {
   root,
   port: int(process.env.PORT, 3000),
@@ -49,6 +72,11 @@ export const config = {
   dataDir: DATA_DIR,
   uploadDir: UPLOAD_DIR,
   dbFile: path.join(DATA_DIR, 'guardian.db'),
+  dbDriver,
+  libsqlUrl,
+  libsqlToken,
+  mediaDriver,
+  mediaChunkBytes: int(process.env.MEDIA_CHUNK_BYTES, 128 * 1024),
   maxUploadBytes: int(process.env.MAX_UPLOAD_BYTES, 10 * 1024 * 1024),
   authRateLimit: int(process.env.AUTH_RATE_LIMIT, 10),
   authRateWindowMin: int(process.env.AUTH_RATE_WINDOW_MIN, 15),

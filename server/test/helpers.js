@@ -9,9 +9,11 @@ export const serverDir = path.resolve(here, '..');
 
 /**
  * Boots a throwaway server instance on its own port with an isolated data dir.
+ * `extraEnv` lets a test switch the storage topology (e.g. a remote libSQL
+ * database instead of the local file).
  * Returns the base URL and a stop() function.
  */
-export async function startServer(port) {
+export async function startServer(port, extraEnv = {}) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'guardian-test-'));
   const base = `http://127.0.0.1:${port}`;
 
@@ -27,6 +29,7 @@ export async function startServer(port) {
       PUBLIC_URL: '',
       AUTH_RATE_LIMIT: '1000',
       DEVICE_RATE_LIMIT: '10000',
+      ...extraEnv,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -62,7 +65,9 @@ export async function api(base, pathname, { method = 'GET', token, deviceToken, 
   if (token) headers.Authorization = `Bearer ${token}`;
   if (deviceToken) headers.Authorization = `Device ${deviceToken}`;
   let payload;
-  if (body !== undefined) {
+  if (body instanceof FormData) {
+    payload = body;
+  } else if (body !== undefined) {
     headers['Content-Type'] = 'application/json';
     payload = JSON.stringify(body);
   }

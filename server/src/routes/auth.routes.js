@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { q, nowIso } from '../db.js';
+import { q, nowIso } from '../db/index.js';
 import { hashPassword, verifyPassword } from '../lib/password.js';
 import { issueToken } from '../lib/jwt.js';
 import { config } from '../config.js';
@@ -38,11 +38,11 @@ authRouter.post(
     if (password.length < 8) {
       return fail(res, 400, 'BAD_REQUEST', 'كلمة المرور يجب أن تكون 8 أحرف على الأقل');
     }
-    if (q.get('SELECT id FROM users WHERE email = ?', email)) {
+    if (await q.get('SELECT id FROM users WHERE email = ?', email)) {
       return fail(res, 409, 'BAD_REQUEST', 'هذا البريد مسجّل مسبقاً');
     }
 
-    const { lastInsertRowid } = q.run(
+    const { lastInsertRowid } = await q.run(
       'INSERT INTO users (email, password_hash, name, created_at) VALUES (?, ?, ?, ?)',
       email,
       hashPassword(password),
@@ -50,7 +50,7 @@ authRouter.post(
       nowIso(),
     );
 
-    const user = q.get('SELECT * FROM users WHERE id = ?', lastInsertRowid);
+    const user = await q.get('SELECT * FROM users WHERE id = ?', lastInsertRowid);
     const token = issueToken({ sub: user.id, email: user.email }, { kind: 'parent' });
     setSessionCookie(res, token);
     return ok(res, { token, user: publicUser(user) }, undefined, 201);
@@ -63,7 +63,7 @@ authRouter.post(
     const email = String(req.body?.email ?? '').trim().toLowerCase();
     const password = String(req.body?.password ?? '');
 
-    const user = q.get('SELECT * FROM users WHERE email = ?', email);
+    const user = await q.get('SELECT * FROM users WHERE email = ?', email);
     // Same message for "no such user" and "wrong password" — do not leak which emails exist.
     if (!user || !verifyPassword(password, user.password_hash)) {
       return fail(res, 401, 'INVALID_TOKEN', 'البريد أو كلمة المرور غير صحيحة');

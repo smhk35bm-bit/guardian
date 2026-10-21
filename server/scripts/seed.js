@@ -8,12 +8,10 @@
  *   node scripts/seed.js --email dad@example.com --password 'Str0ngPass!'
  */
 import crypto from 'node:crypto';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { hashPassword } from '../src/lib/password.js';
 import { config } from '../src/config.js';
-// Importing db.js also creates the schema if this is a fresh database.
-import { q, db } from '../src/db.js';
+// Importing the db module and calling initDb() also creates the schema.
+import { q, initDb } from '../src/db/index.js';
 
 function arg(name, fallback = null) {
   const idx = process.argv.indexOf(`--${name}`);
@@ -26,17 +24,19 @@ const DAYS = Number(arg('days', '7'));
 
 const iso = (d) => d.toISOString();
 
+await initDb();
+
 // ------------------------------------------------------------- parent
-let user = q.get('SELECT * FROM users WHERE email = ?', EMAIL);
+let user = await q.get('SELECT * FROM users WHERE email = ?', EMAIL);
 if (!user) {
-  const { lastInsertRowid } = q.run(
+  const { lastInsertRowid } = await q.run(
     'INSERT INTO users (email, password_hash, name, created_at) VALUES (?, ?, ?, ?)',
     EMAIL,
     hashPassword(PASSWORD),
     'ولي الأمر',
     iso(new Date()),
   );
-  user = q.get('SELECT * FROM users WHERE id = ?', lastInsertRowid);
+  user = await q.get('SELECT * FROM users WHERE id = ?', lastInsertRowid);
   console.log(`[seed] created parent ${EMAIL}`);
 } else {
   console.log(`[seed] parent ${EMAIL} already exists`);
@@ -44,7 +44,7 @@ if (!user) {
 
 // ------------------------------------------------------------- device
 const deviceToken = crypto.randomBytes(32).toString('base64url');
-const { lastInsertRowid: deviceId } = q.run(
+const { lastInsertRowid: deviceId } = await q.run(
   `INSERT INTO devices
      (user_id, name, manufacturer, model, android_version, sdk_int, app_version, device_token, status, created_at)
    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
@@ -81,41 +81,48 @@ const CENTER = { lat: 24.7136, lng: 46.6753 };
 const rand = (min, max) => min + Math.random() * (max - min);
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
-const insertLocation = db.prepare(
-  `INSERT INTO locations (device_id, lat, lng, accuracy, speed, altitude, bearing, provider, battery, at)
-   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-);
-const insertUsage = db.prepare(
-  `INSERT INTO app_usage (device_id, package, label, duration_ms, opened_at, foreground, event_type, at)
-   VALUES (?, ?, ?, ?, ?, 1, 'app_usage', ?)`,
-);
-const insertCall = db.prepare(
-  `INSERT INTO calls (device_id, number, contact_name, call_type, duration_sec, at) VALUES (?, ?, ?, ?, ?, ?)`,
-);
-const insertSms = db.prepare(
-  `INSERT INTO sms (device_id, address, body, msg_type, at) VALUES (?, ?, ?, ?, ?)`,
-);
-const insertApp = db.prepare(
-  `INSERT OR REPLACE INTO installed_apps (device_id, package, label, version, is_system, installed_at, at)
-   VALUES (?, ?, ?, ?, ?, ?, ?)`,
-);
+const statements = [];
 
-db.exec('BEGIN');
-try {
-  for (const app of APPS) {
-    insertApp.run(deviceId, app.package, app.label, '1.0.0', 0, iso(new Date(Date.now() - 30 * 86400_000)), iso(new Date()));
-  }
-  insertApp.run(deviceId, 'com.android.settings', 'الإعدادات', '13', 1, null, iso(new Date()));
-  insertApp.run(deviceId, 'com.android.chrome', 'Chrome', '120', 1, null, iso(new Date()));
+for (const app of APPS) {
+  statements.push({
+    sql: `INSERT OR REPLACE INTO installed_apps
+            (device_id, package, label, version, is_system, installed_at, at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    args: [
+      deviceId,
+      app.package,
+      app.label,
+      '1.0.0',
+      0,
+      iso(new Date(Date.now() - 30 * 86400_000)),
+      iso(new Date()),
+    ],
+  });
+}
+statements.push({
+  sql: `INSERT OR REPLACE INTO installed_apps
+          (device_id, package, label, version, is_system, installed_at, at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  args: [deviceId, 'com.android.settings', 'الإعدادات', '13', 1, null, iso(new Date())],
+});
+statements.push({
+  sql: `INSERT OR REPLACE INTO installed_apps
+          (device_id, package, label, version, is_system, installed_at, at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  args: [deviceId, 'com.android.chrome', 'Chrome', '120', 1, null, iso(new Date())],
+});
 
-  const steps = DAYS * 48; // a location point every ~30 minutes
-  for (let i = 0; i < steps; i += 1) {
-    const at = new Date(Date.now() - i * 30 * 60_000);
-    const angle = i / 7;
-    const radius = 0.006 + Math.sin(i / 11) * 0.004;
-    const battery = Math.max(10, 100 - (i % 60));
+const steps = DAYS * 48; // a location point every ~30 minutes
+for (let i = 0; i < steps; i += 1) {
+  const at = new Date(Date.now() - i * 30 * 60_000);
+  const angle = i / 7;
+  const radius = 0.006 + Math.sin(i / 11) * 0.004;
+  const battery = Math.max(10, 100 - (i % 60));
 
-    insertLocation.run(
+  statements.push({
+    sql: `INSERT INTO locations (device_id, lat, lng, accuracy, speed, altitude, bearing, provider, battery, at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [
       deviceId,
       CENTER.lat + Math.sin(angle) * radius,
       CENTER.lng + Math.cos(angle) * radius,
@@ -126,30 +133,48 @@ try {
       i % 3 === 0 ? 'network' : 'gps',
       battery,
       iso(at),
-    );
+    ],
+  });
 
-    if (i % 3 === 0) {
-      const app = pick(APPS);
-      const minutes = Math.max(1, Math.round(rand(app.base * 0.4, app.base)));
-      insertUsage.run(
+  if (i % 3 === 0) {
+    const app = pick(APPS);
+    const minutes = Math.max(1, Math.round(rand(app.base * 0.4, app.base)));
+    statements.push({
+      sql: `INSERT INTO app_usage (device_id, package, label, duration_ms, opened_at, foreground, event_type, at)
+            VALUES (?, ?, ?, ?, ?, 1, 'app_usage', ?)`,
+      args: [
         deviceId,
         app.package,
         app.label,
         minutes * 60_000,
         iso(new Date(at.getTime() - minutes * 60_000)),
         iso(at),
-      );
-    }
+      ],
+    });
+  }
 
-    if (i % 23 === 0) {
-      const c = pick(CONTACTS);
-      const types = ['incoming', 'outgoing', 'incoming', 'missed'];
-      insertCall.run(deviceId, c.number, c.name, pick(types), Math.round(rand(0, 400)), iso(at));
-    }
+  if (i % 23 === 0) {
+    const c = pick(CONTACTS);
+    const types = ['incoming', 'outgoing', 'incoming', 'missed'];
+    statements.push({
+      sql: `INSERT INTO calls (device_id, number, contact_name, call_type, duration_sec, at)
+            VALUES (?, ?, ?, ?, ?, ?)`,
+      args: [
+        deviceId,
+        c.number,
+        c.name,
+        pick(types),
+        Math.round(rand(0, 400)),
+        iso(at),
+      ],
+    });
+  }
 
-    if (i % 17 === 0) {
-      const c = pick(CONTACTS);
-      insertSms.run(
+  if (i % 17 === 0) {
+    const c = pick(CONTACTS);
+    statements.push({
+      sql: `INSERT INTO sms (device_id, address, body, msg_type, at) VALUES (?, ?, ?, ?, ?)`,
+      args: [
         deviceId,
         c.number,
         pick([
@@ -161,23 +186,26 @@ try {
         ]),
         pick(['inbox', 'inbox', 'sent']),
         iso(at),
-      );
-    }
+      ],
+    });
   }
-  db.exec('COMMIT');
-} catch (err) {
-  db.exec('ROLLBACK');
-  console.error('[seed] failed:', err.message);
-  process.exit(1);
+}
+
+// Insert in chunks so a single request never grows too large.
+const CHUNK = 200;
+for (let i = 0; i < statements.length; i += CHUNK) {
+  await q.batch(statements.slice(i, i + CHUNK));
 }
 
 const counts = {
-  locations: q.get('SELECT COUNT(*) AS c FROM locations WHERE device_id = ?', deviceId).c,
-  usage: q.get('SELECT COUNT(*) AS c FROM app_usage WHERE device_id = ?', deviceId).c,
-  calls: q.get('SELECT COUNT(*) AS c FROM calls WHERE device_id = ?', deviceId).c,
-  sms: q.get('SELECT COUNT(*) AS c FROM sms WHERE device_id = ?', deviceId).c,
+  locations: (await q.get('SELECT COUNT(*) AS c FROM locations WHERE device_id = ?', deviceId)).c,
+  usage: (await q.get('SELECT COUNT(*) AS c FROM app_usage WHERE device_id = ?', deviceId)).c,
+  calls: (await q.get('SELECT COUNT(*) AS c FROM calls WHERE device_id = ?', deviceId)).c,
+  sms: (await q.get('SELECT COUNT(*) AS c FROM sms WHERE device_id = ?', deviceId)).c,
 };
 
 console.log('[seed] done:', counts);
 console.log(`[seed] login with  ${EMAIL}  /  ${PASSWORD}`);
-console.log(`[seed] database    ${path.relative(process.cwd(), config.dbFile)}`);
+console.log(
+  `[seed] database    ${config.dbDriver === 'libsql' ? config.libsqlUrl : config.dbFile}`,
+);

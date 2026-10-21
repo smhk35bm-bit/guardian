@@ -1,5 +1,5 @@
 import { verifyToken } from '../lib/jwt.js';
-import { q } from '../db.js';
+import { q } from '../db/index.js';
 import { fail, forbidden } from '../lib/util.js';
 
 function bearerFrom(req) {
@@ -18,13 +18,13 @@ function deviceFrom(req) {
 }
 
 /** Requires a valid parent token; attaches req.user. */
-export function requireParent(req, res, next) {
+export async function requireParent(req, res, next) {
   const token = bearerFrom(req) || req.cookies?.pg_session;
   const claims = token ? verifyToken(token) : null;
   if (!claims || claims.kind !== 'parent') {
     return fail(res, 401, 'INVALID_TOKEN', 'توكن غير صالح أو منتهي');
   }
-  const user = q.get('SELECT id, email, name, created_at FROM users WHERE id = ?', claims.sub);
+  const user = await q.get('SELECT id, email, name, created_at FROM users WHERE id = ?', claims.sub);
   if (!user) return fail(res, 401, 'INVALID_TOKEN', 'المستخدم غير موجود');
   req.user = user;
   req.parentClaims = claims;
@@ -32,13 +32,13 @@ export function requireParent(req, res, next) {
 }
 
 /** Requires a valid device token; attaches req.device. */
-export function requireDevice(req, res, next) {
+export async function requireDevice(req, res, next) {
   const token = deviceFrom(req);
   const claims = token ? verifyToken(token) : null;
   if (!claims || claims.kind !== 'device') {
     return fail(res, 401, 'INVALID_TOKEN', 'توكن الجهاز غير صالح أو منتهي');
   }
-  const device = q.get('SELECT * FROM devices WHERE id = ?', claims.sub);
+  const device = await q.get('SELECT * FROM devices WHERE id = ?', claims.sub);
   if (!device) return fail(res, 401, 'INVALID_TOKEN', 'الجهاز غير موجود');
   if (device.device_token !== claims.jti) {
     // The token was rotated (device deleted or re-enrolled) — force re-enrollment.

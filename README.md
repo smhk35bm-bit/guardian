@@ -4,18 +4,18 @@
 
 ```
 ┌──────────────────────┐        ┌─────────────────────────┐        ┌──────────────────────┐
-│  تطبيق أندرويد      │  HTTPS │  سيرفر Node.js على VPS  │        │  لوحة تحكم الأب     │
+│  تطبيق أندرويد      │  HTTPS │  سيرفر Node.js          │        │  لوحة تحكم الأب     │
 │  (هاتف الطفل)       │◄──────►│  REST + WebSocket       │◄──────►│  (متصفح / جوال)     │
-│                      │        │  SQLite                 │        │  خريطة لحظية        │
+│                      │        │  SQLite محلي أو Turso    │        │  خريطة لحظية        │
 └──────────────────────┘        └─────────────────────────┘        └──────────────────────┘
 ```
 
 | المكوّن | التقنية | الموقع |
 |---|---|---|
 | لوحة التحكم (ويب) | HTML/CSS/JS خالص + Leaflet محلي | `server/public/` |
-| السيرفر | Node.js 22+ · Express 5 · `node:sqlite` · `ws` | `server/src/` |
+| السيرفر | Node.js 22+ · Express 5 · `node:sqlite` أو libSQL/Turso · `ws` | `server/src/` |
 | تطبيق الأندرويد | Kotlin · Foreground Service · WorkManager | `android/` |
-| النشر | systemd + Nginx + Cloudflare Tunnel | `deploy/` |
+| النشر | systemd + Nginx + Cloudflare Tunnel · أو Render + Turso | `deploy/` |
 
 ---
 
@@ -62,7 +62,23 @@ cd server
 node scripts/simulate-device.js --email dad@example.com --password 'Guardian!2026'
 ```
 
-### ٣) النشر على VPS مجاني
+### ٣) النشر — مساران
+
+#### أ) مجاني **بلا بطاقة بنكية** (Render + Turso) ⭐
+
+مناسب لمن لا يملك بطاقة ائتمان (مثل الجزائر). **٠ دج، وبلا أي وسيلة دفع.**
+
+> القرص في Render مؤقّت، لذلك نضع **قاعدة البيانات والوسائط** في Turso
+> (قاعدة libSQL مجانية). الكود نفسه يعمل على الـ VPS بلا أي تعديل —
+> التبديل بثلاثة متغيّرات بيئة:
+> ```
+> DB_DRIVER=libsql      MEDIA_DRIVER=db
+> ```
+
+الدليل الكامل خطوة بخطوة (حساب Turso ← رابط القاعدة ← توكن ← GitHub ← Blueprint ← التسجيل):
+👉 [`deploy/RENDER_TURSO.md`](deploy/RENDER_TURSO.md)
+
+#### ب) VPS حقيقي (Oracle أو أي مزوّد —项工作ة الرقمية)
 
 **الدليل الكامل خطوة بخطوة** (حساب Oracle ← إنشاء الخادم ← SSH ← رفع ← تثبيت ← HTTPS):
 👉 [`deploy/REMOTE_SETUP.md`](deploy/REMOTE_SETUP.md)
@@ -75,7 +91,8 @@ node scripts/simulate-device.js --email dad@example.com --password 'Guardian!202
 cd /tmp/guardian-upload && sudo ./deploy/setup.sh
 ```
 
-دليل اختيار المزوّد المجاني: [`deploy/VPS_OPTIONS.md`](deploy/VPS_OPTIONS.md)
+دليل اختيار المزوّد (بما فيه خيارات **الدفع بالعملة الرقمية**، مناسبة للجزائر):
+[`deploy/VPS_OPTIONS.md`](deploy/VPS_OPTIONS.md)
 
 ### ٤) تطبيق الأندرويد
 
@@ -96,7 +113,7 @@ cd /tmp/guardian-upload && sudo ./deploy/setup.sh
 | فصل الصلاحيات | مسار الأب لا يقبل توكن جهاز، ومسار الجهاز لا يقبل توكن أب |
 | عزل البيانات | كل استعلام يقيَّد بـ `user_id` المالك — لا تسريب بين الحسابات |
 | تحديد المعدل | ١٠ محاولات/١٥ دقيقة على المصادقة، ٦٠٠/دقيقة للأجهزة |
-| رفع الملفات | حد ١٠ ميغابايت، اسم ملف عشوائي على القرص، تحقق من المسار عند القراءة |
+| رفع الملفات | حد ١٠ ميغابايت، اسم ملف عشوائي، وتخزين إما على القرص أو داخل القاعدة على شكل أجزاء |
 | الترويسات | `helmet` + CSP + HSTS + `nosniff` |
 
 ### الشفافية (قاعدة غير قابلة للتفاوض)
@@ -117,14 +134,15 @@ parental-guardian/
 │   ├── src/
 │   │   ├── index.js            # نقطة الدخول: Express + WS + systemd-friendly
 │   │   ├── config.js           # قراءة .env والتحقق منها
-│   │   ├── db.js               # مخطط SQLite + الاستعلامات + التنظيف الدوري
+│   │   ├── media.js            # تخزين الوسائط: على القرص أو داخل القاعدة
+│   │   ├── db/                 # طبقة القاعدة: schema · sqlite · turso(libSQL)
 │   │   ├── realtime.js         # مركز WebSocket والغرف
 │   │   ├── lib/                # jwt · password · ratelimit · util
 │   │   ├── middleware/auth.js  # requireParent · requireDevice · requireOwnDevice
 │   │   └── routes/             # auth · devices · data
 │   ├── public/                 # لوحة التحكم (بدون build step)
 │   ├── scripts/simulate-device.js
-│   └── test/api.test.js        # ١٤ اختباراً تغطي العقد كاملاً
+│   └── test/                   # ٣٢ اختباراً تغطي العقد كاملاً (محلياً + قاعدة بعيدة)
 ├── android/                    # ← تطبيق الأندرويد (Kotlin)
 ├── deploy/                     # ← systemd · nginx · setup.sh · upload.sh · REMOTE_SETUP.md
 └── docs/API_CONTRACT.md        # ← العقد المرجعي بين الطرفين
@@ -140,7 +158,8 @@ cd server && npm test
 
 يغطي: التسجيل والدخول · دورة كود الربط (توليد/استهلاك/انتهاء) · رفع الوسائط ·
 قراءة كل نقاط النهاية · **عزل الأجهزة** · **عزل الحسابات** · رفض التوكنات المقلوبة ·
-إلغاء ربط الجهاز · التحقق من الإحداثيات · أخطاء 404.
+إلغاء ربط الجهاز · التحقق من الإحداثيات · أخطاء 404 ·
+**والتدفّق كاملاً على قاعدة بيانات بعيدة (libSQL/Turso)** عبر محاكٍ محلي لبروتوكول Turso.
 
 ---
 
@@ -172,9 +191,13 @@ curl https://host/api/devices/1/locations?limit=100 -H "Authorization: Bearer $T
 ## 📌 ملاحظات تشغيلية
 
 - **القرص**: البيانات تُحذف تلقائياً بعد ٩٠ يوماً (`purgeOldData`).
-- **النسخ الاحتياطي**: `sqlite3 server/data/guardian.db ".backup backup.db"` — يُنصح بمهمة يومية.
+- **النسخ الاحتياطي**:
+  - على VPS (SQLite): `sqlite3 server/data/guardian.db ".backup backup.db"` — يُنصح بمهمة يومية.
+  - على Turso: `turso db dump guardian --output backup.sql`.
 - **سجلات**: `journalctl -u guardian -f`.
 - **تحديث**: `git pull && cd server && npm install --omit=dev && sudo systemctl restart guardian`.
+- **طبقة التخزين**: `DB_DRIVER=sqlite|libsql` و `MEDIA_DRIVER=file|db` —
+  الافتراضي `sqlite`/`file` على الـ VPS، و `libsql`/`db` تلقائياً إن ضُبط رابط Turso.
 
 ---
 

@@ -1,9 +1,8 @@
 import crypto from 'node:crypto';
-import path from 'node:path';
-import fs from 'node:fs';
 import { Router } from 'express';
 import multer from 'multer';
-import { q, nowIso } from '../db.js';
+import { q, nowIso } from '../db/index.js';
+import { saveMedia } from '../media.js';
 import { issueToken } from '../lib/jwt.js';
 import { config } from '../config.js';
 import { ok, fail, asyncHandler, toInt, toNum, toBool, cleanText, isoOrNow } from '../lib/util.js';
@@ -15,23 +14,16 @@ export const devicesRouter = Router();
 const CODE_TTL_MIN = 10;
 const CODE_LENGTH = 8;
 
-/** Uploads land on disk with a random name; the DB keeps the original metadata. */
+/**
+ * Uploads are buffered in memory and then handed to the media store, which
+ * decides whether the bytes land on disk or inside the database.
+ */
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: (_req, _file, cb) => cb(null, config.uploadDir),
-    filename: (_req, file, cb) => {
-      const ext = {
-        'image/png': '.png',
-        'image/jpeg': '.jpg',
-        'image/webp': '.webp',
-      }[file.mimetype] || '.bin';
-      cb(null, `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext}`);
-    },
-  }),
+  storage: multer.memoryStorage(),
   limits: { fileSize: config.maxUploadBytes, files: 1 },
 });
 
-function touchDevice(deviceId, patch = {}) {
+async function touchDevice(deviceId, patch = {}) {
   const fields = [];
   const values = [];
   for (const [key, value] of Object.entries(patch)) {
@@ -42,11 +34,11 @@ function touchDevice(deviceId, patch = {}) {
   if (!fields.length) return;
   fields.push('last_seen = ?');
   values.push(nowIso(), deviceId);
-  q.run(`UPDATE devices SET ${fields.join(', ')} WHERE id = ?`, ...values);
+  await q.run(`UPDATE devices SET ${fields.join(', ')} WHERE id = ?`, ...values);
 }
 
-function deviceWithLocation(device) {
-  const loc = q.get(
+async function deviceWithLocation(device) {
+  const loc = await q.get(
     'SELECT lat, lng, accuracy, speed, provider, battery, at FROM locations WHERE device_id = ? ORDER BY at DESC LIMIT 1',
     device.id,
   );
@@ -87,17 +79,17 @@ devicesRouter.post(
   requireParent,
   asyncHandler(async (req, res) => {
     // Invalidate any still-open codes so only the newest one works.
-    q.run('DELETE FROM enrollment_codes WHERE user_id = ? AND used_at IS NULL', req.user.id);
+    await q.run('DELETE FROM enrollment_codes WHERE user_id = ? AND used_at IS NULL', req.user.id);
 
     let code = null;
     for (let attempt = 0; attempt < 10 && !code; attempt += 1) {
       const candidate = String(crypto.randomInt(0, 10 ** CODE_LENGTH)).padStart(CODE_LENGTH, '0');
-      if (!q.get('SELECT id FROM enrollment_codes WHERE code = ?', candidate)) code = candidate;
+      if (!(await q.get('SELECT id FROM enrollment_codes WHERE code = ?', candidate))) code = candidate;
     }
     if (!code) return fail(res, 500, 'INTERNAL', 'تعذّر توليد كود التسجيل');
 
     const expiresAt = new Date(Date.now() + CODE_TTL_MIN * 60_000).toISOString();
-    q.run(
+    await q.run(
       'INSERT INTO enrollment_codes (user_id, code, expires_at, created_at) VALUES (?, ?, ?, ?)',
       req.user.id,
       code,
@@ -118,7 +110,7 @@ devicesRouter.post(
       return fail(res, 400, 'CODE_INVALID', 'كود التسجيل غير صحيح');
     }
 
-    const row = q.get('SELECT * FROM enrollment_codes WHERE code = ?', code);
+    const row = await q.get('SELECT * FROM enrollment_codes WHERE code = ?', code);
     if (!row) return fail(res, 400, 'CODE_INVALID', 'كود التسجيل غير صحيح');
     if (row.used_at) return fail(res, 409, 'CODE_USED', 'هذا الكود استُخدم مسبقاً');
     if (new Date(row.expires_at).getTime() < Date.now()) {
@@ -128,7 +120,7 @@ devicesRouter.post(
     const deviceToken = crypto.randomBytes(32).toString('base64url');
     const name = cleanText(req.body?.deviceName, 80) || cleanText(req.body?.model, 80) || 'جهاز الطفل';
 
-    const { lastInsertRowid: deviceId } = q.run(
+    const { lastInsertRowid: deviceId } = await q.run(
       `INSERT INTO devices
          (user_id, name, manufacturer, model, android_version, sdk_int, app_version, device_token, status, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
@@ -143,12 +135,17 @@ devicesRouter.post(
       nowIso(),
     );
 
-    q.run('UPDATE enrollment_codes SET used_at = ?, device_id = ? WHERE id = ?', nowIso(), deviceId, row.id);
+    await q.run(
+      'UPDATE enrollment_codes SET used_at = ?, device_id = ? WHERE id = ?',
+      nowIso(),
+      deviceId,
+      row.id,
+    );
 
     // The JWT carries the opaque token as `jti`; the server compares them on every request.
     const token = issueToken({ sub: deviceId, jti: deviceToken }, { kind: 'device', days: config.deviceTokenDays });
 
-    const device = q.get('SELECT * FROM devices WHERE id = ?', deviceId);
+    const device = await q.get('SELECT * FROM devices WHERE id = ?', deviceId);
     broadcastToUser(row.user_id, {
       type: 'device.enrolled',
       deviceId,
@@ -169,8 +166,9 @@ devicesRouter.get(
   '/',
   requireParent,
   asyncHandler(async (req, res) => {
-    const devices = q.all('SELECT * FROM devices WHERE user_id = ? ORDER BY id DESC', req.user.id);
-    return ok(res, devices.map(deviceWithLocation), { count: devices.length });
+    const devices = await q.all('SELECT * FROM devices WHERE user_id = ? ORDER BY id DESC', req.user.id);
+    const withLocation = await Promise.all(devices.map((d) => deviceWithLocation(d)));
+    return ok(res, withLocation, { count: withLocation.length });
   }),
 );
 
@@ -178,9 +176,9 @@ devicesRouter.get(
   '/:id',
   requireParent,
   asyncHandler(async (req, res) => {
-    const device = q.get('SELECT * FROM devices WHERE id = ? AND user_id = ?', req.params.id, req.user.id);
+    const device = await q.get('SELECT * FROM devices WHERE id = ? AND user_id = ?', req.params.id, req.user.id);
     if (!device) return fail(res, 404, 'NOT_FOUND', 'الجهاز غير موجود');
-    return ok(res, deviceWithLocation(device));
+    return ok(res, await deviceWithLocation(device));
   }),
 );
 
@@ -188,12 +186,12 @@ devicesRouter.patch(
   '/:id',
   requireParent,
   asyncHandler(async (req, res) => {
-    const device = q.get('SELECT * FROM devices WHERE id = ? AND user_id = ?', req.params.id, req.user.id);
+    const device = await q.get('SELECT * FROM devices WHERE id = ? AND user_id = ?', req.params.id, req.user.id);
     if (!device) return fail(res, 404, 'NOT_FOUND', 'الجهاز غير موجود');
     const name = cleanText(req.body?.name, 80);
-    if (name) q.run('UPDATE devices SET name = ? WHERE id = ?', name, device.id);
-    const updated = q.get('SELECT * FROM devices WHERE id = ?', device.id);
-    return ok(res, deviceWithLocation(updated));
+    if (name) await q.run('UPDATE devices SET name = ? WHERE id = ?', name, device.id);
+    const updated = await q.get('SELECT * FROM devices WHERE id = ?', device.id);
+    return ok(res, await deviceWithLocation(updated));
   }),
 );
 
@@ -202,9 +200,9 @@ devicesRouter.delete(
   '/:id',
   requireParent,
   asyncHandler(async (req, res) => {
-    const device = q.get('SELECT * FROM devices WHERE id = ? AND user_id = ?', req.params.id, req.user.id);
+    const device = await q.get('SELECT * FROM devices WHERE id = ? AND user_id = ?', req.params.id, req.user.id);
     if (!device) return fail(res, 404, 'NOT_FOUND', 'الجهاز غير موجود');
-    q.run("UPDATE devices SET device_token = NULL, status = 'revoked' WHERE id = ?", device.id);
+    await q.run("UPDATE devices SET device_token = NULL, status = 'revoked' WHERE id = ?", device.id);
     broadcastToUser(req.user.id, { type: 'device.revoked', deviceId: device.id, data: {} });
     return ok(res, { revoked: true, deviceId: device.id });
   }),
@@ -218,7 +216,7 @@ devicesRouter.post(
   requireOwnDevice,
   asyncHandler(async (req, res) => {
     const body = req.body ?? {};
-    touchDevice(req.device.id, {
+    await touchDevice(req.device.id, {
       battery: toInt(body.battery),
       charging: toBool(body.charging) === null ? null : toBool(body.charging) ? 1 : 0,
       wifi: cleanText(body.wifi, 80),
@@ -259,7 +257,7 @@ devicesRouter.post(
       return fail(res, 400, 'BAD_REQUEST', 'إحداثيات غير صالحة');
     }
     const at = isoOrNow(body.at);
-    const { lastInsertRowid } = q.run(
+    const { lastInsertRowid } = await q.run(
       `INSERT INTO locations
          (device_id, lat, lng, accuracy, speed, altitude, bearing, provider, battery, at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -274,7 +272,7 @@ devicesRouter.post(
       toInt(body.battery),
       at,
     );
-    touchDevice(req.device.id, { battery: toInt(body.battery) });
+    await touchDevice(req.device.id, { battery: toInt(body.battery) });
 
     broadcastToUser(req.device.user_id, {
       type: 'device.location',
@@ -317,7 +315,7 @@ devicesRouter.post(
     const durationMs = toInt(body.durationMs, 0) ?? 0;
 
     if (type === 'app_usage') {
-      const { lastInsertRowid } = q.run(
+      const { lastInsertRowid } = await q.run(
         `INSERT INTO app_usage
            (device_id, package, label, duration_ms, opened_at, foreground, event_type, at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -347,7 +345,7 @@ devicesRouter.post(
       url: cleanText(body.url, 1000),
       extra: body.extra ?? null,
     });
-    const { lastInsertRowid } = q.run(
+    const { lastInsertRowid } = await q.run(
       'INSERT INTO events (device_id, type, payload, at) VALUES (?, ?, ?, ?)',
       req.device.id,
       type,
@@ -373,7 +371,7 @@ devicesRouter.post(
     const body = req.body ?? {};
     const callType = CALL_TYPES.has(String(body.type)) ? String(body.type) : 'outgoing';
     const at = isoOrNow(body.at);
-    const { lastInsertRowid } = q.run(
+    const { lastInsertRowid } = await q.run(
       'INSERT INTO calls (device_id, number, contact_name, call_type, duration_sec, at) VALUES (?, ?, ?, ?, ?, ?)',
       req.device.id,
       cleanText(body.number, 40),
@@ -408,7 +406,7 @@ devicesRouter.post(
     const body = req.body ?? {};
     const msgType = SMS_TYPES.has(String(body.type)) ? String(body.type) : 'inbox';
     const at = isoOrNow(body.at);
-    const { lastInsertRowid } = q.run(
+    const { lastInsertRowid } = await q.run(
       'INSERT INTO sms (device_id, address, body, msg_type, at) VALUES (?, ?, ?, ?, ?)',
       req.device.id,
       cleanText(body.address, 40),
@@ -431,26 +429,29 @@ devicesRouter.post(
   requireOwnDevice,
   asyncHandler(async (req, res) => {
     const list = Array.isArray(req.body?.apps) ? req.body.apps.slice(0, 1000) : [];
-    q.run('DELETE FROM installed_apps WHERE device_id = ?', req.device.id);
-    let inserted = 0;
+    await q.run('DELETE FROM installed_apps WHERE device_id = ?', req.device.id);
+    const items = [];
     for (const app of list) {
       const pkg = cleanText(app?.package, 200);
       if (!pkg) continue;
-      q.run(
-        `INSERT OR REPLACE INTO installed_apps
-           (device_id, package, label, version, is_system, installed_at, at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        req.device.id,
-        pkg,
-        cleanText(app?.label, 200),
-        cleanText(app?.version, 60),
-        toBool(app?.system) ? 1 : 0,
-        isoOrNow(app?.installedAt),
-        nowIso(),
-      );
-      inserted += 1;
+      items.push({
+        sql: `INSERT OR REPLACE INTO installed_apps
+                (device_id, package, label, version, is_system, installed_at, at)
+              VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          req.device.id,
+          pkg,
+          cleanText(app?.label, 200),
+          cleanText(app?.version, 60),
+          toBool(app?.system) ? 1 : 0,
+          isoOrNow(app?.installedAt),
+          nowIso(),
+        ],
+      });
     }
-    return ok(res, { count: inserted });
+    // One batch — a remote database would need 1000 round-trips otherwise.
+    if (items.length) await q.batch(items);
+    return ok(res, { count: items.length });
   }),
 );
 
@@ -468,30 +469,28 @@ async function handleMediaUpload(req, res, kind) {
   }
 
   const at = nowIso();
-  const { lastInsertRowid } = q.run(
-    'INSERT INTO media (device_id, kind, filename, mime, size, meta, at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    req.device.id,
+  const saved = await saveMedia({
+    deviceId: req.device.id,
     kind,
-    file.filename,
-    file.mimetype,
-    file.size,
+    buffer: file.buffer,
+    mime: file.mimetype,
     meta,
     at,
-  );
+  });
 
   broadcastToUser(req.device.user_id, {
     type: `device.${kind}`,
     deviceId: req.device.id,
-    data: { id: lastInsertRowid, size: file.size, at },
+    data: { id: saved.id, size: saved.size, at },
   });
 
   return ok(
     res,
     {
-      id: lastInsertRowid,
+      id: saved.id,
       kind,
-      url: `/api/devices/${req.device.id}/media/${lastInsertRowid}`,
-      size: file.size,
+      url: `/api/devices/${req.device.id}/media/${saved.id}`,
+      size: saved.size,
       at,
     },
     undefined,

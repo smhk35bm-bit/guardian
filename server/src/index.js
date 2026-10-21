@@ -5,7 +5,7 @@ import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 
 import { config } from './config.js';
-import { purgeOldData } from './db.js';
+import { purgeOldData, initDb } from './db/index.js';
 import { rateLimit, startRateLimitSweeper } from './lib/ratelimit.js';
 import { verifyToken } from './lib/jwt.js';
 import { fail, HttpError } from './lib/util.js';
@@ -125,6 +125,8 @@ app.use((err, req, res, _next) => {
 });
 
 // ------------------------------------------------------------------- start
+await initDb();
+
 const server = http.createServer(app);
 attachRealtime(server);
 startRateLimitSweeper();
@@ -132,13 +134,15 @@ startRateLimitSweeper();
 server.listen(config.port, '0.0.0.0', () => {
   console.log(`[guardian] listening on http://0.0.0.0:${config.port}`);
   console.log(`[guardian] dashboard: ${config.publicUrl || `http://localhost:${config.port}`}`);
-  console.log(`[guardian] database:  ${config.dbFile}`);
+  console.log(`[guardian] database:  ${config.dbDriver === 'libsql' ? config.libsqlUrl : config.dbFile}`);
 });
 
 // Daily retention sweep keeps the free-tier disk from filling up.
-const purgeTimer = setInterval(() => purgeOldData(90), 24 * 3600_000);
+const purgeTimer = setInterval(() => {
+  purgeOldData(90).catch((err) => console.error('[guardian] purge failed:', err));
+}, 24 * 3600_000);
 purgeTimer.unref?.();
-purgeOldData(90);
+purgeOldData(90).catch((err) => console.error('[guardian] purge failed:', err));
 
 function shutdown(signal) {
   console.log(`[guardian] ${signal} received, shutting down`);
