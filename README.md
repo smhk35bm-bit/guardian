@@ -64,9 +64,15 @@ node scripts/simulate-device.js --email dad@example.com --password 'Guardian!202
 
 ### ٣) النشر على VPS مجاني
 
+**الدليل الكامل خطوة بخطوة** (حساب Oracle ← إنشاء الخادم ← SSH ← رفع ← تثبيت ← HTTPS):
+👉 [`deploy/REMOTE_SETUP.md`](deploy/REMOTE_SETUP.md)
+
 ```bash
-# على الـ VPS (Ubuntu 24.04) — بعد نسخ المشروع
-sudo DOMAIN=guardian.example.com ./deploy/setup.sh
+# من جهازك — ارفع المشروع إلى الخادم
+./deploy/upload.sh ubuntu@158.180.42.19
+
+# على الخادم — ثبّت كل شيء
+cd /tmp/guardian-upload && sudo ./deploy/setup.sh
 ```
 
 دليل اختيار المزوّد المجاني: [`deploy/VPS_OPTIONS.md`](deploy/VPS_OPTIONS.md)
@@ -118,7 +124,7 @@ parental-guardian/
 │   ├── scripts/simulate-device.js
 │   └── test/api.test.js        # ١٤ اختباراً تغطي العقد كاملاً
 ├── android/                    # ← تطبيق الأندرويد (Kotlin)
-├── deploy/                     # ← systemd · nginx · setup.sh · VPS_OPTIONS.md
+├── deploy/                     # ← systemd · nginx · setup.sh · upload.sh · REMOTE_SETUP.md
 └── docs/API_CONTRACT.md        # ← العقد المرجعي بين الطرفين
 ```
 
