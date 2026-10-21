@@ -79,9 +79,9 @@ class EnrollmentActivity : AppCompatActivity() {
 
         val identity = DeviceIdentity(
             deviceName = store.deviceName.ifBlank { defaultDeviceName() },
-            manufacturer = Build.MANUFACTURER ?: "",
-            model = Build.MODEL ?: "",
-            androidVersion = Build.VERSION.RELEASE ?: "",
+            manufacturer = Build.MANUFACTURER,
+            model = Build.MODEL,
+            androidVersion = Build.VERSION.RELEASE,
             sdkInt = Build.VERSION.SDK_INT,
             appVersion = BuildConfig.VERSION_NAME
         )

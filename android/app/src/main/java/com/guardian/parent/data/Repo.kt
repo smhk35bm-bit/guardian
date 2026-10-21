@@ -46,7 +46,8 @@ class Repo(context: Context) {
     suspend fun submit(items: List<CollectedItem>): PushResult {
         if (items.isEmpty()) return flushQueue()
         val pending = store.loadQueue()
-        val merged = (pending + items.map { persist(it) }).takeLast(Config.MAX_QUEUE_ITEMS)
+        val fresh = items.mapNotNull { persist(it) }
+        val merged = (pending + fresh).takeLast(Config.MAX_QUEUE_ITEMS)
         store.saveQueue(merged)
         return flushQueue()
     }
@@ -158,8 +159,14 @@ class Repo(context: Context) {
         )
     }
 
-    /** Converts a collected item into a durable queue entry. */
-    private suspend fun persist(item: CollectedItem): PendingItem {
+    /**
+     * Converts a collected item into a durable queue entry.
+     *
+     * Returns `null` when the item can not be queued at all (an oversized
+     * picture, for example): such an item is dropped instead of sending an
+     * empty body to the server.
+     */
+    private suspend fun persist(item: CollectedItem): PendingItem? {
         val bytes = item.bytes
         if (bytes == null) {
             return PendingItem(
@@ -170,7 +177,7 @@ class Repo(context: Context) {
         }
         if (bytes.size > Config.MAX_MEDIA_BYTES) {
             Logger.w("Skipping oversized media (${bytes.size} bytes)")
-            return PendingItem(kind = item.kind.path, payload = null)
+            return null
         }
         val file = File(mediaDir, "${UUID.randomUUID()}.${extensionFor(item.mimeType)}")
         return try {
@@ -184,7 +191,7 @@ class Repo(context: Context) {
             )
         } catch (e: Exception) {
             Logger.e("Unable to persist media for later upload", e)
-            PendingItem(kind = item.kind.path, payload = null)
+            null
         }
     }
 

@@ -10,6 +10,7 @@ import com.guardian.parent.core.CollectorIds
 import com.guardian.parent.core.Config
 import com.guardian.parent.core.Logger
 import com.guardian.parent.core.Notifications
+import com.guardian.parent.core.Permissions
 import com.guardian.parent.data.CollectedItem
 import com.guardian.parent.data.LocalStore
 import com.guardian.parent.data.RemoteConfig
@@ -125,14 +126,18 @@ class MonitorService : LifecycleService() {
 
     private fun promoteToForeground() {
         val notification = Notifications.build(this, store.deviceName.ifBlank { deviceLabel() })
-        val types = ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or
+        // Android 14 refuses the "location" type when the location permission
+        // is missing, therefore the type is chosen from the granted state.
+        val types = if (Permissions.locationGranted(this)) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+        } else {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+        }
         try {
             ServiceCompat.startForeground(this, Config.NOTIFICATION_ID, notification, types)
         } catch (e: Exception) {
-            // On Android 14 the location type requires the location permission
-            // to be granted; fall back to the data sync type which always works.
-            Logger.w("Unable to start the foreground service with the location type", e)
+            Logger.w("Unable to start the foreground service with the chosen type", e)
             try {
                 ServiceCompat.startForeground(
                     this,
@@ -264,7 +269,7 @@ class MonitorService : LifecycleService() {
         /** Lets the UI show whether the monitoring service is currently alive. */
         @Volatile
         var isRunning: Boolean = false
-            private set
+            internal set
 
         /** Starts (or wakes up) the monitoring service. */
         fun start(context: Context) {

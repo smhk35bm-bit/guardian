@@ -89,17 +89,20 @@ class CameraCollector(private val context: Context) : Collector {
         val thread = HandlerThread("guardian-camera").apply { start() }
         val handler = Handler(thread.looper)
         var camera: CameraDevice? = null
-        var reader: ImageReader? = null
         var session: CameraCaptureSession? = null
 
-        try {
-            camera = openCamera(manager, cameraId, handler)
+        // The reader is kept in a `val` on purpose: a `var` that is captured by
+        // the frame listener cannot be smart cast any more.
+        val reader: ImageReader = ImageReader.newInstance(size.width, size.height, ImageFormat.JPEG, 2)
 
-            reader = ImageReader.newInstance(size.width, size.height, ImageFormat.JPEG, 2)
+        try {
+            val openedCamera = openCamera(manager, cameraId, handler)
+            camera = openedCamera
+
             val frame = CompletableDeferred<ByteArray?>()
             reader.setOnImageAvailableListener({
                 try {
-                    val image = reader?.acquireLatestImage()
+                    val image = reader.acquireLatestImage()
                     if (image != null) {
                         val buffer = image.planes[0].buffer
                         val bytes = ByteArray(buffer.remaining())
@@ -113,8 +116,9 @@ class CameraCollector(private val context: Context) : Collector {
                 }
             }, handler)
 
-            session = openSession(camera, reader.surface, handler)
-            takePicture(session, camera, reader.surface, characteristics, handler)
+            val openedSession = openSession(openedCamera, reader.surface, handler)
+            session = openedSession
+            takePicture(openedSession, openedCamera, reader.surface, characteristics, handler)
 
             return withTimeoutOrNull(CAPTURE_TIMEOUT_MS) { frame.await() }
         } finally {
@@ -124,7 +128,7 @@ class CameraCollector(private val context: Context) : Collector {
                 Logger.w("Unable to close the capture session", t)
             }
             try {
-                reader?.close()
+                reader.close()
             } catch (t: Throwable) {
                 Logger.w("Unable to close the image reader", t)
             }
@@ -168,7 +172,7 @@ class CameraCollector(private val context: Context) : Collector {
         manager: CameraManager,
         cameraId: String,
         handler: Handler
-    ): CameraDevice = suspendCancellableCoroutine { continuation ->
+    ): CameraDevice = suspendCancellableCoroutine<CameraDevice> { continuation ->
         try {
             manager.openCamera(cameraId, object : CameraDevice.StateCallback() {
                 override fun onOpened(camera: CameraDevice) {
@@ -199,7 +203,7 @@ class CameraCollector(private val context: Context) : Collector {
         camera: CameraDevice,
         surface: Surface,
         handler: Handler
-    ): CameraCaptureSession = suspendCancellableCoroutine { continuation ->
+    ): CameraCaptureSession = suspendCancellableCoroutine<CameraCaptureSession> { continuation ->
         val callback = object : CameraCaptureSession.StateCallback() {
             override fun onConfigured(session: CameraCaptureSession) {
                 if (continuation.isActive) continuation.resume(session)
