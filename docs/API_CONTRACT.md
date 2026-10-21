@@ -101,7 +101,7 @@ ws://<host>/ws?token=<device-token>
 // req
 {
   "code": "48130277",
-  "deviceName": "هاتف填报",
+  "deviceName": "هاتف الطفل",
   "manufacturer": "Samsung",
   "model": "SM-A125F",
   "androidVersion": "13",
@@ -223,7 +223,7 @@ ws://<host>/ws?token=<device-token>
 
 ## 6. قواعد الترقيم (Pagination)
 
-كل رد قراءة，含 `limit`:
+كل رد قراءة يحتوي على `limit`:
 ```jsonc
 { "ok": true, "data": [ ... ], "meta": { "count": 42, "limit": 500 } }
 ```
@@ -238,5 +238,5 @@ ws://<host>/ws?token=<device-token>
 
 ## 8. CORS
 
-- `Access-Control-Allow-Origin` = `*` (الـ API背后的ه device apps لا CORS، والـ dashboard same-origin).
+- `Access-Control-Allow-Origin` = `*` (الـ API من جهة تطبيقات الأجهزة لا تفرض CORS، والـ dashboard يعمل same-origin).
 - تُقبل جميع methods والـ headers مع `OPTIONS` preflight.

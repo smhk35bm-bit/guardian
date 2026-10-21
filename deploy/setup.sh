@@ -6,6 +6,11 @@
 #
 #  Without DOMAIN it installs the app + systemd service only and
 #  finishes at "how do I reach it?" — use the tunnel section for that.
+#
+#  Extra knobs:
+#    APP_URL=https://x.trycloudflare.com   public URL the app advertises
+#    APP_PORT=3000                          internal port
+#    GUARDIAN_DIR=/opt/guardian             install location
 # =============================================================
 set -euo pipefail
 
@@ -13,6 +18,7 @@ GUARDIAN_DIR="${GUARDIAN_DIR:-/opt/guardian}"
 SERVICE_USER="${SERVICE_USER:-guardian}"
 APP_PORT="${APP_PORT:-3000}"
 DOMAIN="${DOMAIN:-}"
+APP_URL="${APP_URL:-}"
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 log()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
@@ -25,7 +31,7 @@ die()  { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; exit 1; }
 log "Installing base packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq curl ca-certificates gnupg git nginx unzip jq rsync
+apt-get install -y -qq curl ca-certificates gnupg git nginx unzip jq rsync ufw sqlite3
 
 # ----------------------------------------------------------------- node
 if ! command -v node >/dev/null 2>&1 || [[ "$(node -v | sed 's/v\([0-9]*\).*/\1/')" -lt 22 ]]; then
@@ -54,16 +60,16 @@ rsync -a --delete \
   --exclude '.env' --exclude '.git' \
   "$SOURCE_DIR/server/" "$GUARDIAN_DIR/server/"
 
-mkdir -p "$GUARDIAN_DIR/server/data" "$GUARDIEN_DIR/server/uploads"
+mkdir -p "$GUARDIAN_DIR/server/data" "$GUARDIAN_DIR/server/uploads"
 chown -R "$SERVICE_USER:$SERVICE_USER" "$GUARDIAN_DIR"
 
 log "Installing npm dependencies"
-cd "$GUARDIEN_DIR/server"
+cd "$GUARDIAN_DIR/server"
 sudo -u "$SERVICE_USER" npm ci --omit=dev --no-audit --no-fund 2>/dev/null ||
   sudo -u "$SERVICE_USER" npm install --omit=dev --no-audit --no-fund
 
 # ------------------------------------------------------------------ env
-if [[ ! -f "$GUARDIEN_DIR/server/.env" ]]; then
+if [[ ! -f "$GUARDIAN_DIR/server/.env" ]]; then
   log "Generating .env with a fresh JWT secret"
   SECRET="$(node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))")"
   cat > "$GUARDIAN_DIR/server/.env" <<EOF
@@ -81,9 +87,16 @@ DEVICE_RATE_LIMIT=600
 NODE_ENV=production
 EOF
   chmod 600 "$GUARDIAN_DIR/server/.env"
-  chown "$SERVICE_USER:$SERVICE_USER" "$GUARDIEN_DIR/server/.env"
+  chown "$SERVICE_USER:$SERVICE_USER" "$GUARDIAN_DIR/server/.env"
 else
   log ".env already exists — keeping it"
+fi
+
+# The public URL is what the app hands to a phone during enrolment, so it must
+# be correct even when TLS is provided by a tunnel instead of Nginx.
+if [[ -n "$APP_URL" ]]; then
+  log "Setting PUBLIC_URL=$APP_URL"
+  sed -i "s|^PUBLIC_URL=.*|PUBLIC_URL=${APP_URL%/}|" "$GUARDIAN_DIR/server/.env"
 fi
 
 # -------------------------------------------------------------- systemd
@@ -110,7 +123,7 @@ if [[ -n "$DOMAIN" ]]; then
     --redirect -d "$DOMAIN"
 
   # Write the real public URL into the app config so devices get it on enroll.
-  sed -i "s|^PUBLIC_URL=.*|PUBLIC_URL=https://${DOMAIN}|" "$GUARDIEN_DIR/server/.env"
+  sed -i "s|^PUBLIC_URL=.*|PUBLIC_URL=https://${DOMAIN}|" "$GUARDIAN_DIR/server/.env"
   systemctl restart guardian
 else
   log "Skipping Nginx/TLS (no DOMAIN given)"
@@ -121,6 +134,22 @@ log "Configuring the firewall"
 ufw allow OpenSSH >/dev/null 2>&1 || true
 ufw allow "Nginx Full" >/dev/null 2>&1 || true
 ufw --force enable >/dev/null 2>&1 || true
+
+# ------------------------------------------------------------ health check
+log "Verifying the service is healthy"
+HEALTH_URL="http://127.0.0.1:${APP_PORT}/api/health"
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+  if curl -fsS --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then
+    log "Health check passed on attempt $attempt"
+    break
+  fi
+  if [[ $attempt -eq 10 ]]; then
+    warn "The app did not answer on $HEALTH_URL — check: journalctl -u guardian -n 50"
+    systemctl --no-pager --lines=20 status guardian || true
+  else
+    sleep 2
+  fi
+done
 
 cat <<'BANNER'
 

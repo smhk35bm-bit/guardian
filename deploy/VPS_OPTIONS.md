@@ -85,7 +85,7 @@ railway init && railway up
 railway variables set JWT_SECRET="$(openssl rand -base64 48)"
 ```
 
-> ⚠️ كلاهما يوفّر **منفذاً عاماً (port)Http** يجب ربطه بالدومين/النطاق.
+> ⚠️ كلاهما يوفّر **منفذاً عاماً (HTTP port)** يجب ربطه بالدومين/النطاق.
 
 ---
 
