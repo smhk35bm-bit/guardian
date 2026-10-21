@@ -82,6 +82,8 @@ cd /tmp/guardian-upload && sudo ./deploy/setup.sh
 افتح مجلد `android/` في Android Studio، انشر على هاتف الطفل، ثم أدخل
 عنوان السيرفر والكود من اللوحة.
 
+التفاصيل الكاملة (البناء، الأذونات، حدود التطبيق): [`android/README.md`](android/README.md)
+
 ---
 
 ## 🔐 نموذج الأمان
