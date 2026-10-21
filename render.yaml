@@ -15,15 +15,22 @@ services:
     buildCommand: npm install --omit=dev
     startCommand: node src/index.js
     healthCheckPath: /api/health
-    autoDeploy: true
+    autoDeployTrigger: commit
     envVars:
       - key: NODE_ENV
         value: production
+      # إصدار Node — نفس الإصدار المُختبَر عليه محلياً
+      - key: NODE_VERSION
+        value: "24.21.0"
       # القرص في Render مؤقت — لذلك القاعدة والوسائط في Turso
       - key: DB_DRIVER
         value: libsql
       - key: MEDIA_DRIVER
         value: db
+      - key: DATA_DIR
+        value: /tmp/guardian-data
+      - key: UPLOAD_DIR
+        value: /tmp/guardian-uploads
       - key: LIBSQL_URL
         sync: false        # من Turso: turso db show <name> --http-url
       - key: LIBSQL_TOKEN

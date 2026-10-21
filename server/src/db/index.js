@@ -1,7 +1,5 @@
 import { config } from '../config.js';
 import { SCHEMA_SQL } from './schema.js';
-import { createSqliteDriver } from './sqlite-driver.js';
-import { createTursoDriver } from './turso-driver.js';
 
 let driver = null;
 
@@ -10,17 +8,23 @@ let driver = null;
  *
  *   DB_DRIVER=sqlite   → local file (node:sqlite) — VPS / development
  *   DB_DRIVER=libsql   → Turso over HTTP          — ephemeral-disk hosts
+ *
+ * The drivers are imported lazily so a host without `node:sqlite` (or an old
+ * Node that still needs --experimental-sqlite) can still run the remote
+ * database path untouched.
  */
-export function createDriver() {
+export async function createDriver() {
   if (config.dbDriver === 'libsql') {
+    const { createTursoDriver } = await import('./turso-driver.js');
     return createTursoDriver({ url: config.libsqlUrl, token: config.libsqlToken });
   }
+  const { createSqliteDriver } = await import('./sqlite-driver.js');
   return createSqliteDriver({ file: config.dbFile });
 }
 
 /** Creates the schema if it does not exist yet. Safe to call on every boot. */
 export async function initDb() {
-  driver = createDriver();
+  driver = await createDriver();
   await driver.exec(SCHEMA_SQL);
   console.log(`[guardian] database driver: ${driver.name}`);
   return driver;
