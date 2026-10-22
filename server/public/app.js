@@ -15,7 +15,7 @@ const state = {
   ws: null,
   refreshTimer: null,
   enrollTimer: null,
-  live: { source: null, frames: 0, startedAt: 0, pending: false, rateTimer: null },
+  live: { source: null, frames: 0, startedAt: 0, pending: false, rateTimer: null, cameraFacing: 'back' },
 };
 
 /* ------------------------------------------------------------- utilities */
@@ -454,6 +454,20 @@ function setLiveBadge(text, kind = '') {
   el.className = `live-badge${kind ? ` is-${kind}` : ''}`;
 }
 
+function updateCameraSwitchButton() {
+  const btn = $('#live-camera-switch-btn');
+  if (!btn) return;
+  if (state.live.source === 'camera' && state.live.startedAt) {
+    btn.disabled = false;
+    btn.title =
+      state.live.cameraFacing === 'front'
+        ? 'التبديل إلى الكاميرا الخلفية'
+        : 'التبديل إلى الكاميرا الأمامية';
+  } else {
+    btn.disabled = true;
+  }
+}
+
 function startLive(source) {
   if (!state.currentDeviceId) return;
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
@@ -463,8 +477,12 @@ function startLive(source) {
   state.live.source = source;
   state.live.frames = 0;
   state.live.startedAt = Date.now();
+  if (source === 'camera') {
+    state.live.cameraFacing = 'back';
+  }
   setLiveBadge('جارٍ الطلب…', 'warn');
   $('#live-stop-btn').disabled = false;
+  updateCameraSwitchButton();
   $('#live-meta').textContent =
     source === 'camera' ? 'جارٍ تشغيل كاميرا الجهاز…' : 'جارٍ تشغيل بث شاشة الجهاز…';
   requestLive(source);
@@ -487,6 +505,8 @@ function stopLive(silent = false) {
     state.live.frames = 0;
     $('#live-stage').classList.remove('is-live');
     $('#live-stop-btn').disabled = true;
+    const sw = $('#live-camera-switch-btn');
+    if (sw) sw.disabled = true;
     setLiveBadge('غير نشط', '');
   } else {
     resetLiveStage();
@@ -500,6 +520,8 @@ function resetLiveStage() {
   state.live.pending = false;
   $('#live-stage').classList.remove('is-live');
   $('#live-stop-btn').disabled = true;
+  const sw = $('#live-camera-switch-btn');
+  if (sw) sw.disabled = true;
   setLiveBadge('غير نشط', '');
   $('#live-meta').textContent = 'لا بث حالي.';
   const canvas = $('#live-canvas');
@@ -512,7 +534,20 @@ function handleLiveState(msg) {
     setLiveBadge('مباشر', 'live');
     $('#live-stage').classList.add('is-live');
     $('#live-stop-btn').disabled = false;
+    if (msg.source === 'camera') {
+      updateCameraSwitchButton();
+    } else {
+      const sw = $('#live-camera-switch-btn');
+      if (sw) sw.disabled = true;
+    }
     startRateTimer();
+    return;
+  }
+  if (msg.type === 'live.camera') {
+    state.live.cameraFacing = msg.facing === 'front' ? 'front' : 'back';
+    updateCameraSwitchButton();
+    const label = state.live.cameraFacing === 'front' ? 'أمامية' : 'خلفية';
+    toast(`تحوّل إلى الكاميرا ${label}`, 'ok');
     return;
   }
   if (msg.state === 'error') {
@@ -610,8 +645,23 @@ function stopRateTimer() {
   }
 }
 
+function switchCamera() {
+  if (!state.currentDeviceId) return;
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+    toast('قناة التحكم غير متصلة', 'err');
+    return;
+  }
+  if (state.live.source !== 'camera') return;
+  const next = state.live.cameraFacing === 'front' ? 'back' : 'front';
+  const btn = $('#live-camera-switch-btn');
+  if (btn) btn.disabled = true;
+  state.ws.send(JSON.stringify({ type: 'live.switch', deviceId: state.currentDeviceId, facing: next }));
+}
+
 $('#live-screen-btn').addEventListener('click', () => startLive('screen'));
 $('#live-camera-btn').addEventListener('click', () => startLive('camera'));
+const liveSwitch = $('#live-camera-switch-btn');
+if (liveSwitch) liveSwitch.addEventListener('click', switchCamera);
 $('#live-stop-btn').addEventListener('click', () => stopLive());
 
 /* --------------------------------------------------------------- tabs */

@@ -1,5 +1,6 @@
 package com.guardian.parent.service
 
+import android.hardware.camera2.CameraCharacteristics
 import android.app.Notification
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -256,6 +257,37 @@ class MonitorService : LifecycleService() {
                 }
                 liveManager.stop()
                 sendLiveState("stopped", "", null)
+            }
+
+            "live.switch" -> {
+                val facing = message.optString("facing", "front")
+                val toFacing = if (facing == "front") {
+                    CameraCharacteristics.LENS_FACING_FRONT
+                } else {
+                    CameraCharacteristics.LENS_FACING_BACK
+                }
+                scope.launch {
+                    val error = try {
+                        liveManager.switchCamera(toFacing)
+                    } catch (t: Throwable) {
+                        Logger.e("Unable to switch the camera", t)
+                        "INTERNAL"
+                    }
+                    if (error == null) {
+                        val f = liveManager.cameraFacing()
+                        val facingStr = if (f == CameraCharacteristics.LENS_FACING_FRONT) {
+                            "front"
+                        } else {
+                            "back"
+                        }
+                        sendLiveState("started", "camera", null)
+                        deviceSocket?.sendText(
+                            JSONObject().put("type", "live.camera").put("facing", facingStr)
+                        )
+                    } else {
+                        sendLiveState("error", "camera", error)
+                    }
+                }
             }
 
             "ping" -> {

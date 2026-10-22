@@ -50,6 +50,9 @@ class LiveStreamManager(
 
     private var cameraSource: CameraLiveSource? = null
 
+    @Volatile
+    private var cameraFacing: Int = CameraCharacteristics.LENS_FACING_BACK
+
     fun setSink(sink: ((source: Int, jpeg: ByteArray) -> Boolean)?) {
         this.sink = sink
     }
@@ -58,12 +61,17 @@ class LiveStreamManager(
 
     fun activeSource(): Int = activeSource
 
+    /** Current camera facing when streaming the camera, or `null` if not streaming the camera. */
+    fun cameraFacing(): Int? {
+        if (activeSource != SOURCE_CAMERA) return null
+        return cameraFacing
+    }
+
     /** Starts mirroring the screen; returns `null` on success or an error code. */
     @Synchronized
     fun startScreen(): String? {
         stop()
-        val projection = MediaProjectionHolder.current()
-            ?: return "NO_CONSENT"
+        val projection = MediaProjectionHolder.current() ?: return "NO_CONSENT"
         if (!ScreenCaptureSource.ensureStarted(context, projection)) {
             return "SCREEN_UNAVAILABLE"
         }
@@ -89,22 +97,49 @@ class LiveStreamManager(
         MonitorService.ensureForegroundType(ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA)
 
         val source = CameraLiveSource(context) { code ->
-            // An asynchronous failure after the start acknowledgement still has
-            // to reach the parent, otherwise the dashboard waits forever.
             if (activeSource == SOURCE_CAMERA) {
                 activeSource = SOURCE_NONE
             }
             onSessionError("camera", code)
         }
-        val error = source.start { jpeg -> sink?.invoke(SOURCE_CAMERA, jpeg) }
+        val error = source.start(
+            object : (ByteArray) -> Unit {
+                override fun invoke(p1: ByteArray) {
+                    val s = sink
+                    if (s != null) s(SOURCE_CAMERA, p1)
+                }
+            },
+            CameraCharacteristics.LENS_FACING_BACK
+        )
         if (error != null) {
             source.stop()
             return error
         }
         cameraSource = source
+        cameraFacing = CameraCharacteristics.LENS_FACING_BACK
         activeSource = SOURCE_CAMERA
         Logger.i("Live camera stream started")
         return null
+    }
+
+    /** Switches between front and back camera while keeping the live session up. */
+    @Synchronized
+    fun switchCamera(toFacing: Int): String? {
+        if (activeSource != SOURCE_CAMERA) return "NOT_STREAMING"
+        val source = cameraSource ?: return "NOT_STREAMING"
+        val requested = if (toFacing == CameraCharacteristics.LENS_FACING_FRONT) {
+            CameraCharacteristics.LENS_FACING_FRONT
+        } else {
+            CameraCharacteristics.LENS_FACING_BACK
+        }
+        val error = source.switch(requested, { jpeg -> val s = sink; if (s != null) s(SOURCE_CAMERA, jpeg) })
+        return if (error == null) {
+            cameraFacing = requested
+            Logger.i("Live camera switched to $requested")
+            null
+        } else {
+            error
+        }
     }
 
     @Synchronized
@@ -129,11 +164,6 @@ class LiveStreamManager(
 
 /**
  * A repeating camera capture that produces small JPEG frames.
- *
- * The camera is opened once and kept open until the stream stops. Frames are
- * read as YUV and compressed with [YuvImage] because that path is supported by
- * every device, while a repeating JPEG request is not. Frames are throttled to
- * [Config.LIVE_FRAME_INTERVAL_MS] so a 4G link is not saturated.
  */
 private class CameraLiveSource(
     private val context: Context,
@@ -158,14 +188,22 @@ private class CameraLiveSource(
     @Volatile
     private var frameCount: Int = 0
 
+    @Volatile
+    var facing: Int = CameraCharacteristics.LENS_FACING_BACK
+        private set
+
     private val manager: CameraManager?
         get() = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
 
-    /** Returns `null` when the stream is running, an error code otherwise. */
-    fun start(onFrame: (ByteArray) -> Unit): String? {
+    fun start(
+        onFrame: (ByteArray) -> Unit,
+        preferredFacing: Int = CameraCharacteristics.LENS_FACING_BACK
+    ): String? {
+        facing = preferredFacing
         val cameraManager = manager ?: return "NO_CAMERA"
-        val cameraId = selectCamera(cameraManager) ?: return "NO_CAMERA"
-        listener = onFrame
+        val cameraId = selectCamera(cameraManager, preferredFacing) ?: return "NO_CAMERA"
+        @Suppress("UNCHECKED_CAST")
+        listener = onFrame as (ByteArray) -> Unit
         closed = false
         frameCount = 0
 
@@ -203,6 +241,20 @@ private class CameraLiveSource(
             stop()
             "CAMERA_OPEN_FAILED"
         }
+    }
+
+    fun switch(toFacing: Int, onFrame: (ByteArray) -> Unit): String? {
+        val currentListener = listener
+        stop()
+        return start(
+            object : (ByteArray) -> Unit {
+                override fun invoke(p1: ByteArray) {
+                    val cl = listener ?: onFrame
+                    cl.invoke(p1)
+                }
+            },
+            toFacing
+        )
     }
 
     fun stop() {
@@ -318,12 +370,10 @@ private class CameraLiveSource(
             try {
                 image.close()
             } catch (ignored: Throwable) {
-                // Already closed.
             }
         }
     }
 
-    /** YUV_420_888 → NV21 → JPEG. */
     private fun Image.toJpeg(quality: Int): ByteArray? {
         val imageWidth = width
         val imageHeight = height
@@ -345,7 +395,6 @@ private class CameraLiveSource(
 
         val nv21 = ByteArray(imageWidth * imageHeight * 3 / 2)
 
-        // Luma, row by row, skipping the padding at the end of each row.
         val yBuffer = yPlane.buffer
         var position = 0
         for (row in 0 until imageHeight) {
@@ -356,7 +405,6 @@ private class CameraLiveSource(
             position += imageWidth
         }
 
-        // Chroma: NV21 expects V then U, interleaved.
         val chromaHeight = imageHeight / 2
         val chromaWidth = imageWidth / 2
         val uBuffer = uPlane.buffer
@@ -374,7 +422,7 @@ private class CameraLiveSource(
         return nv21
     }
 
-    private fun selectCamera(cameraManager: CameraManager): String? {
+    private fun selectCamera(cameraManager: CameraManager, preferredFacing: Int): String? {
         val ids = try {
             cameraManager.cameraIdList
         } catch (t: Throwable) {
@@ -382,11 +430,18 @@ private class CameraLiveSource(
         }
         for (id in ids) {
             try {
-                val facing = cameraManager.getCameraCharacteristics(id)
+                val f = cameraManager.getCameraCharacteristics(id)
                     .get(CameraCharacteristics.LENS_FACING)
-                if (facing == CameraCharacteristics.LENS_FACING_BACK) return id
+                if (f == preferredFacing) return id
             } catch (t: Throwable) {
-                // Try the next one.
+            }
+        }
+        for (id in ids) {
+            try {
+                val f = cameraManager.getCameraCharacteristics(id)
+                    .get(CameraCharacteristics.LENS_FACING)
+                if (f != null) return id
+            } catch (t: Throwable) {
             }
         }
         return ids.firstOrNull()
