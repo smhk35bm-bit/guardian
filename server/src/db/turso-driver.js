@@ -13,16 +13,23 @@
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 
-/** Encodes a JS value into the typed-value shape used on the wire. */
+/**
+ * Encodes a JS value into the typed-value shape used on the wire.
+ *
+ * The libSQL HTTP API is strict about the JSON type of a typed value:
+ *   integer → the value must be a **string** (to keep 64-bit precision)
+ *   float   → the value must be a **number**
+ * Sending an integer as a JSON number is rejected with HTTP 400.
+ */
 export function encodeArg(value) {
   if (value === undefined || value === null) return { type: 'null' };
-  if (typeof value === 'boolean') return { type: 'integer', value: value ? 1 : 0 };
+  if (typeof value === 'boolean') return { type: 'integer', value: value ? '1' : '0' };
   if (typeof value === 'number') {
     return Number.isInteger(value)
-      ? { type: 'integer', value }
+      ? { type: 'integer', value: String(value) }
       : { type: 'float', value };
   }
-  if (typeof value === 'bigint') return { type: 'integer', value: Number(value) };
+  if (typeof value === 'bigint') return { type: 'integer', value: String(value) };
   if (value instanceof Uint8Array) {
     return { type: 'blob', base64: Buffer.from(value).toString('base64') };
   }

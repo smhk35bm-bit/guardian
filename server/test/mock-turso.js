@@ -23,14 +23,27 @@ function encodeValue(value) {
   return { type: 'text', value: String(value) };
 }
 
+/**
+ * Decodes a typed value, enforcing the same strictness as the real service:
+ * an integer must arrive as a string, a float as a number. The mock is strict
+ * on purpose — otherwise a broken encoder would pass the tests and only fail
+ * against the real database.
+ */
 function decodeArg(arg) {
   if (!arg || typeof arg !== 'object') return null;
   switch (arg.type) {
     case 'null':
       return null;
     case 'integer':
+      if (typeof arg.value !== 'string') {
+        throw new Error('integer value must be a string (got ' + typeof arg.value + ')');
+      }
+      return Number(arg.value);
     case 'float':
-      return typeof arg.value === 'number' ? arg.value : Number(arg.value ?? 0);
+      if (typeof arg.value !== 'number') {
+        throw new Error('float value must be a number (got ' + typeof arg.value + ')');
+      }
+      return arg.value;
     case 'blob':
       return Buffer.from(String(arg.base64 ?? arg.value ?? ''), 'base64');
     default:

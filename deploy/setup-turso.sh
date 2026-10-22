@@ -12,7 +12,7 @@ export PATH="$HOME/.turso:$PATH"
 cd "$(dirname "$0")/.."
 
 DB_NAME="${1:-${TURSO_DB_NAME:-guardian}}"
-LOCATION="${TURSO_LOCATION:-lhr}"   # London — أقرب نقطة إلى الجزائر
+LOCATION="${TURSO_LOCATION:-aws-eu-west-1}"   # Ireland — أقرب نقطة إلى الجزائر
 OUT="server/.env.turso"
 
 strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
