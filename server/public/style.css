@@ -25,6 +25,15 @@
 
 * { box-sizing: border-box; }
 
+/*
+ * The [hidden] attribute is the only mechanism the dashboard uses to switch
+ * screens. Author rules such as `.modal { display: grid }` or
+ * `#app-view { display: flex }` would otherwise win over the browser's
+ * default `[hidden] { display: none }`, leaving the modal permanently on top
+ * of the page and blocking every click.
+ */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   padding: 0;
