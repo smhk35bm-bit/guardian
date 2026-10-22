@@ -10,7 +10,6 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
-import android.hardware.camera2.SessionConfiguration
 import android.media.ImageReader
 import android.os.Build
 import android.os.Handler
@@ -29,16 +28,11 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
-import java.util.concurrent.Executor
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 /**
  * Takes a picture with the device camera.
- *
- * This collector is **off by default**: the parent has to enable it
- * explicitly and the user has to grant the `CAMERA` permission. A picture is
- * only taken while the app is in the foreground.
  */
 class CameraCollector(private val context: Context) : Collector {
 
@@ -69,26 +63,18 @@ class CameraCollector(private val context: Context) : Collector {
         }
     }
 
-    // ------------------------------------------------------------------
-    // Internals
-    // ------------------------------------------------------------------
-
     @Suppress("DEPRECATION")
     private suspend fun capturePhoto(): ByteArray? {
-        // Android 14 only allows the camera to be opened while the foreground
-        // service runs with the matching type.
         MonitorService.ensureForegroundType(ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA)
 
-        val manager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
-            ?: return null
+        val manager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager ?: return null
         val cameraId = selectCamera(manager) ?: run {
             Logger.w("No usable camera found")
             return null
         }
 
         val characteristics = manager.getCameraCharacteristics(cameraId)
-        val streamMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-            ?: return null
+        val streamMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: return null
         val sizes = streamMap.getOutputSizes(ImageFormat.JPEG) ?: return null
         val size = pickSize(sizes) ?: return null
 
@@ -97,9 +83,7 @@ class CameraCollector(private val context: Context) : Collector {
         var camera: CameraDevice? = null
         var session: CameraCaptureSession? = null
 
-        // The reader is kept in a `val` on purpose: a `var` that is captured by
-        // the frame listener cannot be smart cast any more.
-        val reader: ImageReader = ImageReader.newInstance(size.width, size.height, ImageFormat.JPEG, 2)
+        val reader = ImageReader.newInstance(size.width, size.height, ImageFormat.JPEG, 2)
 
         try {
             val openedCamera = openCamera(manager, cameraId, handler)
@@ -128,136 +112,81 @@ class CameraCollector(private val context: Context) : Collector {
 
             return withTimeoutOrNull(CAPTURE_TIMEOUT_MS) { frame.await() }
         } finally {
-            try {
-                session?.close()
-            } catch (t: Throwable) {
-                Logger.w("Unable to close the capture session", t)
-            }
-            try {
-                reader.close()
-            } catch (t: Throwable) {
-                Logger.w("Unable to close the image reader", t)
-            }
-            try {
-                camera?.close()
-            } catch (t: Throwable) {
-                Logger.w("Unable to close the camera", t)
-            }
+            try { session?.close() } catch (t: Throwable) {}
+            try { reader.close() } catch (t: Throwable) {}
+            try { camera?.close() } catch (t: Throwable) {}
             thread.quitSafely()
         }
     }
 
     private fun selectCamera(manager: CameraManager): String? {
-        val ids = try {
-            manager.cameraIdList
-        } catch (t: Throwable) {
-            Logger.w("Unable to list the cameras", t)
-            return null
-        }
-        // Prefer the rear camera, fall back to whatever is available.
+        val ids = try { manager.cameraIdList } catch (t: Throwable) { return null }
         for (id in ids) {
             try {
-                val facing = manager.getCameraCharacteristics(id)
-                    .get(CameraCharacteristics.LENS_FACING)
+                val facing = manager.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING)
                 if (facing == CameraCharacteristics.LENS_FACING_BACK) return id
-            } catch (t: Throwable) {
-                // Ignore and try the next one.
-            }
+            } catch (t: Throwable) {}
         }
         return ids.firstOrNull()
     }
 
-    /** Keeps the payload small enough for a mobile connection. */
-    private fun pickSize(sizes: android.util.Size[]): android.util.Size? {
+    private fun pickSize(sizes: Array<android.util.Size>): android.util.Size? {
         val affordable = sizes.filter { it.width <= 1600 }
-        return affordable.maxByOrNull { it.width.toLong() * it.height }
-            ?: sizes.minByOrNull { it.width.toLong() * it.height }
-    }
-
-    private suspend fun openCamera(
-        manager: CameraManager,
-        cameraId: String,
-        handler: Handler
-    ): CameraDevice = suspendCancellableCoroutine<CameraDevice> { continuation ->
-        try {
-            manager.openCamera(cameraId, object : CameraDevice.StateCallback() {
-                override fun onOpened(camera: CameraDevice) {
-                    if (continuation.isActive) continuation.resume(camera)
-                }
-
-                override fun onDisconnected(camera: CameraDevice) {
-                    camera.close()
-                    if (continuation.isActive) {
-                        continuation.resumeWithException(IllegalStateException("Camera disconnected"))
-                    }
-                }
-
-                override fun onError(camera: CameraDevice, error: Int) {
-                    camera.close()
-                    if (continuation.isActive) {
-                        continuation.resumeWithException(IllegalStateException("Camera error $error"))
-                    }
-                }
-            }, handler)
-        } catch (t: Throwable) {
-            if (continuation.isActive) continuation.resumeWithException(t)
-        }
+        return affordable.maxByOrNull { it.width.toLong() * it.height } ?: sizes.minByOrNull { it.width.toLong() * it.height }
     }
 
     @Suppress("DEPRECATION")
-    private suspend fun openSession(
-        camera: CameraDevice,
-        surface: Surface,
-        handler: Handler
-    ): CameraCaptureSession = suspendCancellableCoroutine<CameraCaptureSession> { continuation ->
-        val callback = object : CameraCaptureSession.StateCallback() {
-            override fun onConfigured(session: CameraCaptureSession) {
-                if (continuation.isActive) continuation.resume(session)
+    private suspend fun openCamera(manager: CameraManager, cameraId: String, handler: Handler): CameraDevice =
+        suspendCancellableCoroutine { continuation ->
+            try {
+                if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                    if (continuation.isActive) continuation.resumeWithException(SecurityException("Camera permission missing"))
+                    return@suspendCancellableCoroutine
+                }
+                manager.openCamera(cameraId, object : CameraDevice.StateCallback() {
+                    override fun onOpened(camera: CameraDevice) {
+                        if (continuation.isActive) continuation.resume(camera)
+                    }
+                    override fun onDisconnected(camera: CameraDevice) {
+                        camera.close()
+                        if (continuation.isActive) continuation.resumeWithException(IllegalStateException("Camera disconnected"))
+                    }
+                    override fun onError(camera: CameraDevice, error: Int) {
+                        camera.close()
+                        if (continuation.isActive) continuation.resumeWithException(IllegalStateException("Camera error $error"))
+                    }
+                }, handler)
+            } catch (t: Throwable) {
+                if (continuation.isActive) continuation.resumeWithException(t)
             }
+        }
 
-            override fun onConfigureFailed(session: CameraCaptureSession) {
-                if (continuation.isActive) {
-                    continuation.resumeWithException(IllegalStateException("Unable to configure the camera"))
+    @Suppress("DEPRECATION")
+    private suspend fun openSession(camera: CameraDevice, surface: Surface, handler: Handler): CameraCaptureSession =
+        suspendCancellableCoroutine { continuation ->
+            val callback = object : CameraCaptureSession.StateCallback() {
+                override fun onConfigured(session: CameraCaptureSession) {
+                    if (continuation.isActive) continuation.resume(session)
+                }
+                override fun onConfigureFailed(session: CameraCaptureSession) {
+                    if (continuation.isActive) continuation.resumeWithException(IllegalStateException("Unable to configure the camera"))
                 }
             }
-        }
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                val executor: Executor = ContextCompat.getMainExecutor(context)
-                val configuration = SessionConfiguration(
-                    SessionConfiguration.SESSION_REGULAR,
-                    listOf(surface),
-                    executor,
-                    callback
-                )
-                camera.createCaptureSession(configuration)
-            } else {
+            try {
                 camera.createCaptureSession(listOf(surface), callback, handler)
+            } catch (t: Throwable) {
+                if (continuation.isActive) continuation.resumeWithException(t)
             }
-        } catch (t: Throwable) {
-            if (continuation.isActive) continuation.resumeWithException(t)
         }
-    }
 
-    private fun takePicture(
-        session: CameraCaptureSession,
-        camera: CameraDevice,
-        surface: Surface,
-        characteristics: CameraCharacteristics,
-        handler: Handler
-    ) {
+    private fun takePicture(session: CameraCaptureSession, camera: CameraDevice, surface: Surface, characteristics: CameraCharacteristics, handler: Handler) {
         val request = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
             addTarget(surface)
             set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation(characteristics))
         }.build()
-
         session.capture(request, object : CameraCaptureSession.CaptureCallback() {
-            override fun onCaptureFailed(
-                session: CameraCaptureSession,
-                request: CaptureRequest,
-                failure: android.hardware.camera2.CaptureFailure
-            ) {
-                Logger.e("The camera capture failed", failure)
+            override fun onCaptureFailed(session: CameraCaptureSession, request: CaptureRequest, failure: android.hardware.camera2.CaptureFailure) {
+                Logger.e("The camera capture failed (reason=${failure.reason})")
             }
         }, handler)
     }
@@ -265,8 +194,7 @@ class CameraCollector(private val context: Context) : Collector {
     @Suppress("DEPRECATION")
     private fun jpegOrientation(characteristics: CameraCharacteristics): Int {
         val sensor = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
-        val displayManager = context.getSystemService(Context.DISPLAY_SERVICE)
-            as? android.hardware.display.DisplayManager
+        val displayManager = context.getSystemService(Context.DISPLAY_SERVICE) as? android.hardware.display.DisplayManager
         val display = displayManager?.getDisplay(android.view.Display.DEFAULT_DISPLAY)
         val rotation = display?.rotation ?: android.view.Surface.ROTATION_0
         val degrees = when (rotation) {
@@ -279,8 +207,7 @@ class CameraCollector(private val context: Context) : Collector {
     }
 
     private fun hasCameraPermission(): Boolean =
-        ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
-            PackageManager.PERMISSION_GRANTED
+        ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
 
     companion object {
         private const val MIME_JPEG = "image/jpeg"
