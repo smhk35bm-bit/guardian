@@ -23,44 +23,33 @@ jobs:
 
     steps:
       - name: جلب المستودع
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: تجهيز Java 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      # ملاحظة: لا نستخدم android-actions/setup-android لأن sdkmanager
-      # داخله ينفّذ "sdkmanager tools" وهي حزمة أُزيلت من مستودع Google،
-      # فتُفشل الوظيفة. نستخدم SDK الجاهز في runner بدلًا منها.
-      - name: تجهيز Android SDK
-        run: |
-          set -euo pipefail
-          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
-
-          SDKMANAGER="$(command -v sdkmanager || true)"
-          if [[ -z "$SDKMANAGER" ]]; then
-            SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -maxdepth 3 -name sdkmanager -type f 2>/dev/null | sort | tail -1)"
-          fi
-          if [[ -z "$SDKMANAGER" ]]; then
-            echo "[!] لم يُعثر على sdkmanager في $SDK_ROOT" >&2
-            exit 1
-          fi
-          echo "sdkmanager: $SDKMANAGER"
-
-          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses > /dev/null || true
-          "$SDKMANAGER" --sdk_root="$SDK_ROOT" \
-            "platform-tools" "platforms;android-34" "build-tools;34.0.0"
-
       - name: تثبيت Gradle 8.7
         run: |
           set -euo pipefail
-          curl -fsSL --retry 3 -o gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
-          unzip -q gradle.zip -d "$HOME"
+          curl -fsSL --retry 3 -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
+          unzip -q /tmp/gradle.zip -d "$HOME"
           echo "$HOME/gradle-8.7/bin" >> "$GITHUB_PATH"
+
+      - name: إعداد ANDROID_HOME
+        run: |
+          echo "ANDROID_HOME=/usr/local/lib/android/sdk" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=/usr/local/lib/android/sdk" >> $GITHUB_ENV
+          echo "/usr/local/lib/android/sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "/usr/local/lib/android/sdk/platform-tools" >> $GITHUB_PATH
+
+      - name: قبول تراخيص SDK وتثبيت المكوّنات
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses || true
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
       - name: توليد غلاف Gradle
         working-directory: android
@@ -70,7 +59,7 @@ jobs:
         working-directory: android
         env:
           GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx3g
-        run: gradle :app:assembleDebug --stacktrace --no-daemon
+        run: ./gradlew :app:assembleDebug --stacktrace --no-daemon
 
       - name: رفع ملف APK
         uses: actions/upload-artifact@v4
