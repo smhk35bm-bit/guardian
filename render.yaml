@@ -37,8 +37,7 @@ services:
         sync: false        # من Turso: turso db tokens create <name>
       - key: JWT_SECRET
         generateValue: true
-      - key: PUBLIC_URL
-        sync: false        # رابط Render بعد أول نشر
+      # PUBLIC_URL اختياري: إن لم يُضبط يستنتج الخادم رابطه من الطلب نفسه.
       - key: MAX_UPLOAD_BYTES
         value: "10485760"
       - key: AUTH_RATE_LIMIT

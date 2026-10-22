@@ -98,6 +98,9 @@ async function enrollDevice(parentToken, name = 'هاتف الطفل') {
     },
   });
   assert.equal(regRes.status, 200, JSON.stringify(regRes.body));
+  // PUBLIC_URL is unset in the test env: the server must still hand the phone a
+  // usable absolute URL derived from the request it arrived on.
+  assert.match(regRes.body.data.serverUrl, /^http:\/\/127\.0\.0\.1:\d+\/api$/);
   return regRes.body.data;
 }
 

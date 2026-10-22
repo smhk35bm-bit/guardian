@@ -15,6 +15,17 @@ const CODE_TTL_MIN = 10;
 const CODE_LENGTH = 8;
 
 /**
+ * Absolute base URL of this server, as seen by the client.
+ * PUBLIC_URL wins when set (custom domain); otherwise the request's own
+ * scheme + Host header is used, which is correct behind Render/NGINX because
+ * `trust proxy` is enabled.
+ */
+function baseUrl(req) {
+  if (config.publicUrl) return config.publicUrl;
+  return `${req.protocol}://${req.get('host')}`;
+}
+
+/**
  * Uploads are buffered in memory and then handed to the media store, which
  * decides whether the bytes land on disk or inside the database.
  */
@@ -155,7 +166,9 @@ devicesRouter.post(
     return ok(res, {
       deviceId,
       deviceToken: token,
-      serverUrl: config.publicUrl ? `${config.publicUrl}/api` : '/api',
+      // PUBLIC_URL is optional: fall back to the host the request arrived on so a
+      // fresh deployment works without any extra configuration.
+      serverUrl: `${baseUrl(req)}/api`,
     });
   }),
 );

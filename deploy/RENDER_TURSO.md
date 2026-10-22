@@ -87,26 +87,26 @@ git push -u origin main
    |---|---|
    | `LIBSQL_URL` | رابط Turso من الخطوة ١ (يبدأ بـ `https://`) |
    | `LIBSQL_TOKEN` | التوكن الطويل من الخطوة ١ |
-   | `PUBLIC_URL` | اتركه فارغاً الآن — سنضعه بعد أول نشر |
 
-   (`JWT_SECRET` يُولّده Render تلقائياً ✓)
+   (`JWT_SECRET` يُولّده Render تلقائياً ✓ — و`PUBLIC_URL` لم يعد مطلوباً:
+   يستنتج الخادم رابطه من الطلب نفسه.)
 
 4. اضغط **Apply** → انتظر انتهاء البناء (دقيقة أو دقيقتان).
-5. سيصبح الرابط: `https://guardian-server.onrender.com` — جرّبه:
+5. الرابط النهائي يظهر أعلى صفحة الخدمة في Render. لو كان الاسم محجوزاً
+   سيضيف Render لاحقة، مثل: `https://guardian-server-nugk.onrender.com` — جرّبه:
 
    ```bash
-   curl https://guardian-server.onrender.com/api/health
+   curl https://guardian-server-nugk.onrender.com/api/health
    # {"ok":true,"data":{"status":"healthy",...}}
    ```
 
-6. ارجع إلى **Environment** وضع `PUBLIC_URL=https://guardian-server.onrender.com`
-   ثم **Save & Redeploy** (حتى يعرف التطبيق الهاتفُ برابطه النهائي).
+6. لا حاجة لأي خطوة إضافية — التطبيق يعرف رابطه تلقائياً.
 
 ---
 
 ## الخطوة ٤ — إنشاء حساب ولي الأمر
 
-افتح `https://guardian-server.onrender.com` في المتصفح، سجّل حساباً (بريد + كلمة مرور)،
+افتح رابط خدمتك في Render (مثل `https://guardian-server-nugk.onrender.com`) في المتصفح، سجّل حساباً (بريد + كلمة مرور)،
 ثم من تبويب **الأجهزة** اضغط **كود تسجيل** وأدخل الرمز في تطبيق الهاتف.
 
 ---
