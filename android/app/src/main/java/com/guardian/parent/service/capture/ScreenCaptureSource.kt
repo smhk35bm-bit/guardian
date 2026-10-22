@@ -43,7 +43,16 @@ object ScreenCaptureSource {
 
     /** Set while a live stream is running; frames are throttled to its pace. */
     @Volatile
-    private var frameListener: ((ByteArray) -> Unit)? = null
+    private var frameListener: ((ByteArray) -> Boolean)? = null
+
+    /**
+     * Adaptive quality of the live view (0.55–1.0). It shrinks when the
+     * uplink refuses a frame and recovers after a run of accepted frames.
+     */
+    @Volatile
+    private var liveScale: Float = 1f
+
+    private var acceptedStreak: Int = 0
 
     @Volatile
     private var frameIntervalMs: Long = Config.LIVE_FRAME_INTERVAL_MS
@@ -127,9 +136,11 @@ object ScreenCaptureSource {
     }
 
     /** Registers (or clears) the live frame consumer. */
-    fun setFrameListener(listener: ((ByteArray) -> Unit)?, intervalMs: Long) {
+    fun setFrameListener(listener: ((ByteArray) -> Boolean)?, intervalMs: Long) {
         frameIntervalMs = intervalMs.coerceAtLeast(50L)
         lastFrameAt = 0L
+        liveScale = 1f
+        acceptedStreak = 0
         frameListener = listener
         if (listener == null) {
             // Wake up anybody who is still waiting: the caller must time out
@@ -199,17 +210,27 @@ object ScreenCaptureSource {
             // reader would stall after a few buffers.
             if (!due && waiter == null) return
 
-            val quality = if (streaming != null) Config.LIVE_JPEG_QUALITY else Config.LIVE_SCREENSHOT_QUALITY
-            val maxWidth = if (streaming != null) Config.LIVE_MAX_WIDTH else 0
+            val quality = if (streaming != null) {
+                (Config.LIVE_JPEG_QUALITY * (0.7f + 0.3f * liveScale)).toInt().coerceIn(28, 60)
+            } else {
+                Config.LIVE_SCREENSHOT_QUALITY
+            }
+            val maxWidth = if (streaming != null) {
+                (Config.LIVE_MAX_WIDTH * liveScale).toInt().coerceAtLeast(360)
+            } else {
+                0
+            }
             val jpeg = image.toJpeg(quality, maxWidth) ?: return
 
             if (due) {
                 lastFrameAt = now
-                try {
-                    streaming?.invoke(jpeg)
+                val accepted = try {
+                    streaming?.invoke(jpeg) ?: false
                 } catch (t: Throwable) {
                     Logger.w("$TAG: the live consumer failed", t)
+                    false
                 }
+                if (streaming != null) adapt(accepted)
             }
 
             waiter?.let { pending ->
@@ -224,6 +245,30 @@ object ScreenCaptureSource {
             } catch (ignored: Throwable) {
                 // Already closed.
             }
+        }
+    }
+
+    /**
+     * Moves the live quality towards what the uplink can carry.
+     *
+     * The socket reports a refused frame when its queue is full; shrinking the
+     * next frames keeps the delay low. A run of 20 accepted frames (a few
+     * seconds of real movement) allows the quality to climb back.
+     */
+    private fun adapt(accepted: Boolean) {
+        if (accepted) {
+            acceptedStreak += 1
+            if (acceptedStreak >= 20) {
+                acceptedStreak = 0
+                liveScale = (liveScale * 1.1f).coerceAtMost(1f)
+            }
+            return
+        }
+        acceptedStreak = 0
+        val next = (liveScale * 0.85f).coerceAtLeast(0.55f)
+        if (next < liveScale - 0.01f) {
+            liveScale = next
+            Logger.d("$TAG: live quality reduced to ${(next * 100).toInt()}%")
         }
     }
 

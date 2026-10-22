@@ -38,15 +38,19 @@ class LiveStreamManager(
     private val onSessionError: (source: String, code: String) -> Unit = { _, _ -> },
 ) {
 
-    /** Called for every frame that must be pushed to the server. */
-    private var sink: ((source: Int, jpeg: ByteArray) -> Unit)? = null
+    /**
+     * Called for every frame that must be pushed to the server. It returns
+     * `false` when the frame was refused (for example a saturated uplink) so
+     * the screen source can lower its quality.
+     */
+    private var sink: ((source: Int, jpeg: ByteArray) -> Boolean)? = null
 
     @Volatile
     private var activeSource: Int = SOURCE_NONE
 
     private var cameraSource: CameraLiveSource? = null
 
-    fun setSink(sink: ((source: Int, jpeg: ByteArray) -> Unit)?) {
+    fun setSink(sink: ((source: Int, jpeg: ByteArray) -> Boolean)?) {
         this.sink = sink
     }
 
@@ -64,8 +68,8 @@ class LiveStreamManager(
             return "SCREEN_UNAVAILABLE"
         }
 
-        val consumer: (ByteArray) -> Unit = { jpeg ->
-            sink?.invoke(SOURCE_SCREEN, jpeg)
+        val consumer: (ByteArray) -> Boolean = { jpeg ->
+            sink?.invoke(SOURCE_SCREEN, jpeg) ?: false
         }
         ScreenCaptureSource.setFrameListener(consumer, Config.LIVE_FRAME_INTERVAL_MS)
         activeSource = SOURCE_SCREEN

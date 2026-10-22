@@ -63,7 +63,9 @@ class DeviceSocket(
 
     private val attempt = AtomicInteger(0)
     private val sequence = AtomicInteger(0)
+    private val droppedFrames = AtomicInteger(0)
     private var reconnectTask: ScheduledFuture<*>? = null
+    private var handshakeTask: ScheduledFuture<*>? = null
 
     fun isConnected(): Boolean = connected
 
@@ -78,6 +80,7 @@ class DeviceSocket(
         connected = false
         reconnectTask?.cancel(false)
         reconnectTask = null
+        cancelHandshakeTimer()
         try {
             socket?.close(1000, "service stopped")
         } catch (t: Throwable) {
@@ -110,6 +113,14 @@ class DeviceSocket(
     fun sendFrame(source: Int, jpeg: ByteArray): Boolean {
         val current = socket ?: return false
         if (!connected) return false
+        // Do not build a backlog on a slow uplink: a stale frame is worthless.
+        if (current.queueSize() > Config.LIVE_MAX_SEND_QUEUE_BYTES) {
+            val dropped = droppedFrames.incrementAndGet()
+            if (dropped % 25 == 0) {
+                Logger.d("Live: dropped $dropped frames, the uplink is saturated")
+            }
+            return false
+        }
         val header = ByteBuffer.allocate(HEADER_SIZE).order(ByteOrder.BIG_ENDIAN)
         header.put(PROTOCOL_VERSION)
         header.put(source.toByte())
@@ -144,6 +155,7 @@ class DeviceSocket(
         val request = Request.Builder().url(url).build()
         socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                cancelHandshakeTimer()
                 connected = true
                 attempt.set(0)
                 Logger.i("Device socket connected")
@@ -164,23 +176,58 @@ class DeviceSocket(
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                cancelHandshakeTimer()
                 connected = false
                 webSocket.close(1000, null)
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                cancelHandshakeTimer()
                 connected = false
                 onState(false)
                 scheduleReconnect()
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                cancelHandshakeTimer()
                 connected = false
-                Logger.w("Device socket failed: ${t.message}")
+                Logger.w("Device socket failed: ${t.javaClass.simpleName}: ${t.message}")
                 onState(false)
                 scheduleReconnect()
             }
         })
+        armHandshakeTimer()
+    }
+
+    /**
+     * A WebSocket handshake that never answers would otherwise stall the
+     * channel forever (no `onOpen`, no `onFailure`). The timer cancels it and
+     * lets the normal reconnect logic retry.
+     */
+    private fun armHandshakeTimer() {
+        cancelHandshakeTimer()
+        handshakeTask = try {
+            scheduler.schedule({
+                if (!connected) {
+                    Logger.w("The device socket handshake timed out")
+                    try {
+                        socket?.cancel()
+                    } catch (t: Throwable) {
+                        Logger.w("Unable to cancel the stalled socket", t)
+                    }
+                    socket = null
+                    onState(false)
+                    scheduleReconnect()
+                }
+            }, HANDSHAKE_TIMEOUT_SEC, TimeUnit.SECONDS)
+        } catch (t: Throwable) {
+            null
+        }
+    }
+
+    private fun cancelHandshakeTimer() {
+        handshakeTask?.cancel(false)
+        handshakeTask = null
     }
 
     private fun scheduleReconnect() {
@@ -223,6 +270,9 @@ class DeviceSocket(
 
     companion object {
         const val PROTOCOL_VERSION: Byte = 1
+
+        /** How long a WebSocket handshake may stay silent before a retry. */
+        private const val HANDSHAKE_TIMEOUT_SEC = 20L
         const val HEADER_SIZE = 12
     }
 }

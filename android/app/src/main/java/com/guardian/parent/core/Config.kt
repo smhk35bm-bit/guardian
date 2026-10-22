@@ -47,13 +47,22 @@ object Config {
     /**
      * The live view is a Motion-JPEG stream sent over the WebSocket. On a 4G
      * link the useful compromise is a small frame (at most [LIVE_MAX_WIDTH]
-     * pixels wide) at [LIVE_FRAME_INTERVAL_MS]. A 480p JPEG at ~4 fps costs
-     * roughly 100–250 kB/s, which any data plan handles.
+     * pixels wide) at [LIVE_FRAME_INTERVAL_MS]. The device content decides the
+     * real size: a still screen produces no frame at all, a scrolling list
+     * costs roughly 25–40 kB per frame (≈ 0.2–0.4 MB/s at 6 fps).
      */
-    const val LIVE_MAX_WIDTH = 720
-    const val LIVE_FRAME_INTERVAL_MS = 250L
-    const val LIVE_JPEG_QUALITY = 50
+    const val LIVE_MAX_WIDTH = 640
+    const val LIVE_FRAME_INTERVAL_MS = 200L
+    const val LIVE_JPEG_QUALITY = 45
     const val LIVE_SCREENSHOT_QUALITY = 82
+
+    /**
+     * A mobile uplink is the real limit of the live view: a 4G cell often
+     * uploads less than 1 Mbit/s. When the socket still has this many bytes
+     * waiting the next frame is dropped instead of queued, so the parent sees
+     * a slightly choppy but *current* picture instead of a growing delay.
+     */
+    const val LIVE_MAX_SEND_QUEUE_BYTES = 96L * 1024L
 
     /**
      * The shared virtual display is created at this width so a screenshot keeps
