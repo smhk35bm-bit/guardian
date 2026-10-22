@@ -1,7 +1,7 @@
 # عقد API — Guardian Parental Control
 
 > العقد المرجعي الذي يجب أن يطابقه كل من **السيرفر** (`server/`) و**تطبيق الأندرويد** (`android/`).
-> أي انحراف عن هذا العقد يُعتبر خطأ. آخر تحديث: v1.
+> أي انحراف عن هذا العقد يُعتبر خطأ. آخر تحديث: v2 (بث مباشر).
 
 ## 1. عام
 
@@ -60,6 +60,66 @@ ws://<host>/ws?token=<device-token>
 - اتصال الـ device يستقبل إشعار `config.updated`.
 - الرسائل: `{ "type": "device.location", "deviceId": 3, "data": {...} }`
 - ping/pong كل 30 ثانية.
+
+### 1.4 البث المباشر (Live v2)
+
+جلسة بث **واحدة** لكل جهاز في أي وقت: `source = "screen"` أو `"camera"`.
+محتوى الفيديو يُرسل كإطارات **JPEG ثنائية** (Motion-JPEG) لأنها تعمل على 4G بلا
+مُرمِّز فيديو، ولأنها تُستهلك مباشرة في المتصفح دون WebCodecs.
+
+#### التحكم (JSON)
+
+الأب → السيرفر:
+
+```jsonc
+{ "type": "live.start", "deviceId": 3, "source": "screen" }  // أو "camera"
+{ "type": "live.stop",  "deviceId": 3 }
+```
+
+السيرفر يتحقق أن الجهاز يملكه نفس الأب، ثم:
+
+- السيرفر → الجهاز: `{ "type": "live.start", "source": "camera" }` أو `{ "type": "live.stop" }`
+- الجهاز → السيرفر → كل أجهزة الأب: `{ "type": "live.state", "deviceId": 3,
+  "state": "started"|"stopped"|"error", "source": "screen", "error": "NO_CONSENT" }`
+
+أكواد الخطأ:
+
+| error | المعنى |
+|---|---|
+| `NO_CONSENT` | لم يمنح المستخدم موافقة MediaProjection بعد |
+| `SCREEN_UNAVAILABLE` | تعذّر إنشاء `VirtualDisplay` (قيود النظام) |
+| `NO_CAMERA_PERMISSION` | إذن الكاميرا غير ممنوح |
+| `NO_CAMERA` / `CAMERA_OPEN_FAILED` | لا كاميرا متاحة أو مشغولة |
+| `CAMERA_ERROR` / `CAMERA_DISCONNECTED` | انقطاع الكاميرا أثناء البث |
+| `DEVICE_OFFLINE` | لا يوجد اتصال WebSocket للجهاز |
+| `FORBIDDEN` / `BAD_DEVICE` | الجهاز ليس ملكاً لهذا الحساب |
+
+#### الإطارات (Binary)
+
+الجهاز → السيرفر (12 بايت ثم JPEG):
+
+```
+[0]      version = 1
+[1]      source   (1 = شاشة، 2 = كاميرا)
+[2..3]   flags    (0 حالياً)
+[4..7]   seq      uint32 BE
+[8..11]  length   uint32 BE  (طول JPEG الذي يليه)
+```
+
+السيرفر يعيد التغليف بإضافة `deviceId` (16 بايت ثم JPEG):
+
+```
+[0]      version = 1
+[1]      source
+[2..3]   flags
+[4..7]   deviceId uint32 BE   ← يضيفه السيرفر
+[8..11]  seq      uint32 BE
+[12..15] length   uint32 BE
+```
+
+- المعدّل الافتراضي: إطار كل **250 مللي ثانية** (≈4 إطارات/ث)، عرض ≤ 720px، جودة JPEG 50.
+- الإطارات تُسقَط عند بطء المستهلك (`bufferedAmount > 2MB`) بدل تكديسها.
+- لا يُخزَّن أي إطار على القرص أو في قاعدة البيانات.
 
 ---
 

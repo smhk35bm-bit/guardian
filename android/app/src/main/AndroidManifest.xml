@@ -79,7 +79,8 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Guardian">
+        android:theme="@style/Theme.Guardian"
+        android:usesCleartextTraffic="true">
 
         <!--
           The launcher entry point is the enrollment screen. The label of the

@@ -19,6 +19,8 @@ import com.guardian.parent.data.CollectedItem
 import com.guardian.parent.data.LocalStore
 import com.guardian.parent.data.RemoteConfig
 import com.guardian.parent.data.Repo
+import com.guardian.parent.net.DeviceSocket
+import com.guardian.parent.service.live.LiveStreamManager
 import com.guardian.parent.service.collectors.CallLogCollector
 import com.guardian.parent.service.collectors.CameraCollector
 import com.guardian.parent.service.collectors.HeartbeatCollector
@@ -37,6 +39,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.json.JSONObject
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 
@@ -66,6 +69,10 @@ class MonitorService : LifecycleService() {
         Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
 
     private var schedulerJob: Job? = null
+
+    /** The persistent control channel to the server and the live session. */
+    private var deviceSocket: DeviceSocket? = null
+    private lateinit var liveManager: LiveStreamManager
 
     /**
      * The foreground service types that were requested at runtime.
@@ -101,6 +108,9 @@ class MonitorService : LifecycleService() {
         screenshotCollector = ScreenshotCollector(this)
         cameraCollector = CameraCollector(this)
         heartbeatCollector = HeartbeatCollector(this)
+        liveManager = LiveStreamManager(this) { source, code ->
+            sendLiveState("error", source, code)
+        }
 
         Notifications.ensureChannel(this)
         promoteToForeground()
@@ -119,6 +129,7 @@ class MonitorService : LifecycleService() {
 
         promoteToForeground()
         startScheduler()
+        ensureRealtime()
 
         when (intent?.action) {
             ACTION_COLLECT_NOW -> {
@@ -141,8 +152,84 @@ class MonitorService : LifecycleService() {
         Logger.i("Guardian monitoring service stopped")
         isRunning = false
         instance = null
+        try {
+            liveManager.stop()
+        } catch (t: Throwable) {
+            Logger.w("Unable to stop the live stream", t)
+        }
+        deviceSocket?.close()
+        deviceSocket = null
         scope.cancel()
         super.onDestroy()
+    }
+
+    // ------------------------------------------------------------------
+    // Live channel (WebSocket)
+    // ------------------------------------------------------------------
+
+    /**
+     * Opens the control socket once and wires the live manager to it.
+     *
+     * The socket is the only always-on connection of the app: the parent can
+     * ask for the screen or the camera at any moment without waiting for the
+     * next periodic upload.
+     */
+    private fun ensureRealtime() {
+        if (deviceSocket != null) return
+        val socket = DeviceSocket(store, ::onControlMessage)
+        liveManager.setSink { source, jpeg -> socket.sendFrame(source, jpeg) }
+        deviceSocket = socket
+        socket.connect()
+    }
+
+    /**
+     * Handles the commands the parent sends from the dashboard.
+     *
+     * A live session always answers with a `live.state` message, so the
+     * dashboard can show *why* a request failed (no consent yet, camera busy…)
+     * instead of silently waiting.
+     */
+    private fun onControlMessage(message: JSONObject) {
+        when (message.optString("type")) {
+            "live.start" -> {
+                val source = message.optString("source", "screen")
+                scope.launch {
+                    val error = try {
+                        if (source == "camera") {
+                            liveManager.startCamera()
+                        } else {
+                            liveManager.startScreen()
+                        }
+                    } catch (t: Throwable) {
+                        Logger.e("Unable to start the live stream", t)
+                        "INTERNAL"
+                    }
+                    if (error == null) {
+                        sendLiveState("started", source, null)
+                    } else {
+                        sendLiveState("error", source, error)
+                    }
+                }
+            }
+
+            "live.stop" -> {
+                liveManager.stop()
+                sendLiveState("stopped", "", null)
+            }
+
+            "ping" -> {
+                deviceSocket?.sendText(JSONObject().put("type", "pong"))
+            }
+        }
+    }
+
+    private fun sendLiveState(state: String, source: String, error: String?) {
+        val message = JSONObject()
+            .put("type", "live.state")
+            .put("state", state)
+        if (source.isNotEmpty()) message.put("source", source)
+        if (error != null) message.put("error", error)
+        deviceSocket?.sendText(message)
     }
 
     // ------------------------------------------------------------------
@@ -317,6 +404,21 @@ class MonitorService : LifecycleService() {
         val now = System.currentTimeMillis()
         for ((id, collect) in collectorPlan()) {
             if (!store.collectorEnabled(id)) continue
+
+            // A live session owns the camera (or the screen) until it stops.
+            if (liveManager.isStreaming()) {
+                if (id == CollectorIds.CAMERA &&
+                    liveManager.activeSource() == LiveStreamManager.SOURCE_CAMERA
+                ) {
+                    continue
+                }
+                if (id == CollectorIds.SCREENSHOT &&
+                    liveManager.activeSource() == LiveStreamManager.SOURCE_SCREEN
+                ) {
+                    continue
+                }
+            }
+
             val intervalMs = store.collectorInterval(id) * 1000L
             val last = lastRunAt[id] ?: 0L
             if (now - last < intervalMs) continue

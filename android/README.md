@@ -139,7 +139,9 @@ POST /api/devices/enroll-code      (ترويسة: Authorization: Bearer <parent-
 | مؤشّر بصري دائم | أيقونة الدرع `ic_stat_guardian` في إشعار الخدمة الأمامية. |
 | تسميات صريحة | `app_name = "Guardian — المراقبة العائلية"`؛ ولا يوجد أي كود لإخفاء الأيقونة أو تغيير مُكوِّنات التطبيق. |
 | إبلاغ صريح عند التسجيل | شاشة الربط تعرض نصًا كاملًا لما يُجمع ولماذا، وكيف يُوقف المستخدم كل شيء. |
-| موافقة لكل جلسة للّقطة | `MediaProjectionHolder` لا ينشئ إسقاطًا إلا بعد موافقة النظام في الجلسة الحالية. |
+| موافقة النظام للشاشة | `MediaProjectionHolder` لا ينشئ إسقاطًا إلا بعد موافقة النظام في الجلسة الحالية، ويمكن سحبها من الإشعار الدائم في أي وقت. |
+| لا توافق تلقائي | لا توجد `AccessibilityService` ولا أي آلية تضغط على نوافذ النظام بالنيابة عن المستخدم. |
+| البث المباشر معلن | بث الكاميرا يبدأ من لوحة الأب بعد منح إذن الكاميرا مرة واحدة، وبث الشاشة يعمل ضمن موافقة MediaProjection الظاهرة في شريط الحالة. |
 | إمكانية الإيقاف الكامل | زر «إلغاء الربط» يوقف كل شيء ويمسح التوكن. |
 | لا تعتيم | `isMinifyEnabled = false`، ولا ProGuard ولا Any 或许 obfuscation. |
 
@@ -162,11 +164,14 @@ android/
         │   ├── GuardianApp.kt
         │   ├── core/                # Config, Logger, Json, TimeFmt, Notifications, Permissions
         │   ├── data/                # Models, ApiClient, LocalStore, Repo
+        │   ├── net/DeviceSocket.kt  # WebSocket دائم: أوامر + إطارات JPEG
         │   ├── service/
         │   │   ├── MonitorService.kt    # الخدمة الأمامية + المجدول + أنواع FGS
         │   │   ├── UploadWorker.kt      # شبكة أمان دورية (WorkManager)
         │   │   ├── BootReceiver.kt      # إعادة التشغيل بعد إعادة تشغيل الهاتف
         │   │   ├── MediaProjectionHolder.kt  # جسر موافقة التقاط الشاشة
+        │   │   ├── capture/ScreenCaptureSource.kt  # VirtualDisplay واحد + JPEG
+        │   │   ├── live/LiveStreamManager.kt       # بث الشاشة/الكاميرا
         │   │   └── collectors/       # المُجمِّعات الثمانية
         │   └── ui/                  # Enrollment, Main, Settings, Permission + محوّلات RecyclerView
         └── res/
@@ -196,6 +201,8 @@ android/
 | نوع المحتوى | `application/json; charset=utf-8` للـ JSON، و`multipart/form-data` للوسائط |
 | حقول multipart | `file` = الملف الثنائي، `meta` = نص JSON اختياري |
 | المسارات | `POST /api/devices/{deviceId}/{heartbeat\|location\|events\|calls\|sms\|screenshots\|photos\|apps}` |
+| WebSocket | `wss://<host>/ws?token=<deviceToken>` — نفس توكن الجهاز، إعادة اتصال تلقائية بتباعد أسّي (2s…60s) |
+| البث | إطارات JPEG ثنائية، رأس 12 بايت، إطار كل 250ms، عرض ≤720px |
 | نموذج الخطأ | `{ "ok": false, "error": { "code": "…", "message": "…" } }` — يُعرض `error.message` للمستخدم كما هو |
 | تقييد المعدل | 600 طلب/دقيقة لكل جهاز (الحد الأدنى للفواصل 15 ثانية للموقع و60 ثانية لغيره) |
 | رمز التوكن | صالح سنة (365 يومًا) |
@@ -244,11 +251,15 @@ android/
    Kotlin، تطابق الحزم، وتطابق الاستدعاءات مع توقيعات المكتبات المُنزّلة (بما فيها
    `play-services-location` و`androidx.core`).
 2. **ملفات الـ wrapper ناقصة**: `gradlew` و`gradle-wrapper.jar` غير موجودين (انظر §2).
-3. **لا يوجد WebSocket** في التطبيق: الإشعارات الفورية من الخادم (مثل
-   `config.updated`) غير مُطبّقة؛ الفواصل عن بُعد تصل مع `heartbeat` فقط.
+3. **WebSocket موجود** (`net/DeviceSocket.kt`) ويُستخدم للبث المباشر وأوامر
+   `live.start`/`live.stop`. إشعار `config.updated` لا يزال غير مُطبّق؛ الفواصل
+   عن بُعد تصل مع `heartbeat` فقط.
 4. **سجلّ المتصفح والإشعارات** (`browser_history`, `notification`) نوعان معرّفان في
    العقد لكن التطبيق لا يجمعهما (مصدران غير متاحين بدون أذونات خاصة إضافية).
-5. **الكاميرا** تلتقط صورة واحدة فقط في كل دورة؛ التطبيق لا ينفّذ تسجيل فيديو.
+5. **الكاميرا**: صورة واحدة كل دورة للجمع الدوري، و**بث مباشر** (MJPEG) عند طلب
+   الأب. لا يوجد تسجيل فيديو H.264/MediaCodec — الإطارات JPEG لتوافق أوسع على 4G.
+   بث الشاشة يحتاج موافقة MediaProjection؛ بعض أجهزة سامسونج تطلب كلمة مرور حساب
+   سامسونج لمشاركة الشاشة، ولا يحاول التطبيق تجاوزها.
 6. **حدّ حجم الوسائط 4 ميغابايت** (أقلّ من حدّ الخادم 10 ميغابايت) كاحتياط على
    استهلاك الذاكرة؛ الصور الأكبر تُسقَط وتُسجَّل في السجل.
 7. **فاصل WorkManager الأدنى 15 دقيقة**؛ في وضع «توفير البطارية» قد تتأخّر خدمة

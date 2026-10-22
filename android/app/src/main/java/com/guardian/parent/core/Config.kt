@@ -42,6 +42,29 @@ object Config {
     const val CONNECT_TIMEOUT_SEC = 15L
     const val READ_TIMEOUT_SEC = 30L
     const val WRITE_TIMEOUT_SEC = 60L
+
+    // ---- Live stream over the mobile network ---------------------------
+    /**
+     * The live view is a Motion-JPEG stream sent over the WebSocket. On a 4G
+     * link the useful compromise is a small frame (at most [LIVE_MAX_WIDTH]
+     * pixels wide) at [LIVE_FRAME_INTERVAL_MS]. A 480p JPEG at ~4 fps costs
+     * roughly 100–250 kB/s, which any data plan handles.
+     */
+    const val LIVE_MAX_WIDTH = 720
+    const val LIVE_FRAME_INTERVAL_MS = 250L
+    const val LIVE_JPEG_QUALITY = 50
+    const val LIVE_SCREENSHOT_QUALITY = 82
+
+    /**
+     * The shared virtual display is created at this width so a screenshot keeps
+     * its detail; live frames are downscaled to [LIVE_MAX_WIDTH] right before
+     * they are encoded.
+     */
+    const val SCREENSHOT_MAX_WIDTH = 1080
+
+    /** Reconnect backoff of the device socket. */
+    const val LIVE_RECONNECT_MIN_MS = 2_000L
+    const val LIVE_RECONNECT_MAX_MS = 60_000L
 }
 
 /** Stable identifiers of every collector; they double as preference keys. */

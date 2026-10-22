@@ -15,6 +15,7 @@ const state = {
   ws: null,
   refreshTimer: null,
   enrollTimer: null,
+  live: { source: null, frames: 0, startedAt: 0, pending: false, rateTimer: null },
 };
 
 /* ------------------------------------------------------------- utilities */
@@ -262,6 +263,7 @@ function renderDeviceHead() {
 }
 
 function selectDevice(id) {
+  if (state.live.source) stopLive(true);
   state.currentDeviceId = id;
   renderDeviceList();
   renderDeviceHead();
@@ -375,11 +377,18 @@ function connectRealtime() {
   if (state.ws) state.ws.close();
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(state.token)}`);
+  ws.binaryType = 'arraybuffer';
   state.ws = ws;
 
-  ws.addEventListener('open', () => setConn('is-live', 'متصل لحظياً'));
+  ws.addEventListener('open', () => {
+    setConn('is-live', 'متصل لحظياً');
+    // The server drops device sockets on restart; the device reconnects by
+    // itself, so resuming the view only needs another start request.
+    if (state.live.source) requestLive(state.live.source);
+  });
   ws.addEventListener('close', () => {
     setConn('is-down', 'انقطع الاتصال');
+    if (state.live.source) setLiveBadge('انقطع الاتصال', 'err');
     // Reconnect with a small backoff so a server restart reconnects on its own.
     setTimeout(() => {
       if (state.token) connectRealtime();
@@ -388,6 +397,12 @@ function connectRealtime() {
   ws.addEventListener('error', () => setConn('is-down', 'خطأ اتصال'));
 
   ws.addEventListener('message', (event) => {
+    // Live frames arrive as binary JPEGs; everything else is JSON.
+    if (event.data instanceof ArrayBuffer) {
+      handleLiveFrame(event.data);
+      return;
+    }
+
     let msg;
     try {
       msg = JSON.parse(event.data);
@@ -395,6 +410,11 @@ function connectRealtime() {
       return;
     }
     if (msg.deviceId && msg.deviceId !== state.currentDeviceId) return;
+
+    if (msg.type === 'live.state') {
+      handleLiveState(msg);
+      return;
+    }
 
     if (msg.type === 'device.location' || msg.type === 'device.heartbeat') {
       loadDevices().then(() => {
@@ -410,6 +430,189 @@ function setConn(cls, text) {
   el.className = `conn ${cls}`;
   $('#conn-text').textContent = text;
 }
+
+/* ------------------------------------------------------------ live view */
+
+const LIVE_ERRORS = {
+  NO_CONSENT:
+    'لم يمنح الجهاز إذن تصوير الشاشة بعد. افتح تطبيق Guardian على الجهاز وامنح إذن التسجيل.',
+  DEVICE_OFFLINE: 'الجهاز غير متصل الآن. تأكد من اتصاله بالإنترنت.',
+  NO_CAMERA_PERMISSION: 'إذن الكاميرا غير ممنوح على الجهاز.',
+  CAMERA_ERROR: 'تعذّر تشغيل الكاميرا (قد تكون مستخدمة من تطبيق آخر).',
+  CAMERA_DISCONNECTED: 'انقطعت الكاميرا عن الجهاز.',
+  CAMERA_OPEN_FAILED: 'تعذّر فتح كاميرا الجهاز.',
+  SCREEN_UNAVAILABLE: 'تعذّر إنشاء قناة تصوير الشاشة على الجهاز.',
+  FORBIDDEN: 'هذا الجهاز ليس مسجّلاً في حسابك.',
+  BAD_DEVICE: 'طلب غير صالح.',
+  INTERNAL: 'خطأ داخلي في الجهاز.',
+};
+
+function setLiveBadge(text, kind = '') {
+  const el = $('#live-badge');
+  if (!el) return;
+  el.textContent = text;
+  el.className = `live-badge${kind ? ` is-${kind}` : ''}`;
+}
+
+function startLive(source) {
+  if (!state.currentDeviceId) return;
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+    toast('قناة التحكم غير متصلة، انتظر لحظة ثم أعد المحاولة', 'err');
+    return;
+  }
+  state.live.source = source;
+  state.live.frames = 0;
+  state.live.startedAt = Date.now();
+  setLiveBadge('جارٍ الطلب…', 'warn');
+  $('#live-stop-btn').disabled = false;
+  $('#live-meta').textContent =
+    source === 'camera' ? 'جارٍ تشغيل كاميرا الجهاز…' : 'جارٍ تشغيل بث شاشة الجهاز…';
+  requestLive(source);
+}
+
+function requestLive(source) {
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+  state.ws.send(
+    JSON.stringify({ type: 'live.start', deviceId: state.currentDeviceId, source }),
+  );
+}
+
+function stopLive(silent = false) {
+  if (state.ws && state.ws.readyState === WebSocket.OPEN && state.currentDeviceId) {
+    state.ws.send(JSON.stringify({ type: 'live.stop', deviceId: state.currentDeviceId }));
+  }
+  if (silent) {
+    stopRateTimer();
+    state.live.source = null;
+    state.live.frames = 0;
+    $('#live-stage').classList.remove('is-live');
+    $('#live-stop-btn').disabled = true;
+    setLiveBadge('غير نشط', '');
+  } else {
+    resetLiveStage();
+  }
+}
+
+function resetLiveStage() {
+  stopRateTimer();
+  state.live.source = null;
+  state.live.frames = 0;
+  state.live.pending = false;
+  $('#live-stage').classList.remove('is-live');
+  $('#live-stop-btn').disabled = true;
+  setLiveBadge('غير نشط', '');
+  $('#live-meta').textContent = 'لا بث حالي.';
+  const canvas = $('#live-canvas');
+  const ctx = canvas.getContext('2d');
+  if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+function handleLiveState(msg) {
+  if (msg.state === 'started') {
+    setLiveBadge('مباشر', 'live');
+    $('#live-stage').classList.add('is-live');
+    $('#live-stop-btn').disabled = false;
+    startRateTimer();
+    return;
+  }
+  if (msg.state === 'error') {
+    const text = LIVE_ERRORS[msg.error] || `تعذّر بدء البث (${msg.error || 'خطأ'}).`;
+    resetLiveStage();
+    setLiveBadge('تعذّر البدء', 'err');
+    $('#live-meta').textContent = text;
+    toast(text, 'err');
+    return;
+  }
+  if (msg.state === 'stopped') {
+    resetLiveStage();
+  }
+}
+
+/**
+ * One binary frame: [ver:1][source:1][flags:2][deviceId:4][seq:4][length:4] + JPEG.
+ * Frames are decoded only while the live tab is visible, and never queued.
+ */
+function handleLiveFrame(buffer) {
+  if (buffer.byteLength <= 16) return;
+  const view = new DataView(buffer);
+  if (view.getUint8(0) !== 1) return;
+  const source = view.getUint8(1);
+  if (source !== 1 && source !== 2) return;
+  if (view.getUint32(4) !== state.currentDeviceId) return;
+  if (!state.live.source || state.activeTab !== 'live') return;
+  const length = view.getUint32(12);
+  if (!length || 16 + length > buffer.byteLength) return;
+  if (state.live.pending) return;
+
+  state.live.pending = true;
+  state.live.frames += 1;
+  drawLiveFrame(new Blob([new Uint8Array(buffer, 16, length)], { type: 'image/jpeg' }));
+}
+
+async function drawLiveFrame(blob) {
+  const canvas = $('#live-canvas');
+  try {
+    let width;
+    let height;
+    let paint;
+    if (typeof createImageBitmap === 'function') {
+      const bitmap = await createImageBitmap(blob);
+      width = bitmap.width;
+      height = bitmap.height;
+      paint = () => {
+        canvas.getContext('2d').drawImage(bitmap, 0, 0);
+        if (bitmap.close) bitmap.close();
+      };
+    } else {
+      const url = URL.createObjectURL(blob);
+      const image = await new Promise((resolve, reject) => {
+        const element = new Image();
+        element.onload = () => resolve(element);
+        element.onerror = reject;
+        element.src = url;
+      });
+      width = image.naturalWidth;
+      height = image.naturalHeight;
+      paint = () => {
+        canvas.getContext('2d').drawImage(image, 0, 0);
+        URL.revokeObjectURL(url);
+      };
+    }
+    if (canvas.width !== width) canvas.width = width;
+    if (canvas.height !== height) canvas.height = height;
+    paint();
+    $('#live-stage').classList.add('is-live');
+  } catch {
+    /* a broken frame is skipped; the next one replaces it */
+  } finally {
+    state.live.pending = false;
+  }
+}
+
+function startRateTimer() {
+  stopRateTimer();
+  state.live.rateTimer = setInterval(() => {
+    if (!state.live.source) {
+      stopRateTimer();
+      return;
+    }
+    const seconds = Math.max(1, (Date.now() - state.live.startedAt) / 1000);
+    const fps = (state.live.frames / seconds).toFixed(1);
+    const label = state.live.source === 'camera' ? 'الكاميرا' : 'الشاشة';
+    $('#live-meta').textContent = `بث ${label} — ${state.live.frames} إطاراً — ${fps} إطار/ث.`;
+  }, 1000);
+}
+
+function stopRateTimer() {
+  if (state.live.rateTimer) {
+    clearInterval(state.live.rateTimer);
+    state.live.rateTimer = null;
+  }
+}
+
+$('#live-screen-btn').addEventListener('click', () => startLive('screen'));
+$('#live-camera-btn').addEventListener('click', () => startLive('camera'));
+$('#live-stop-btn').addEventListener('click', () => stopLive());
 
 /* --------------------------------------------------------------- tabs */
 

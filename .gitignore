@@ -13,6 +13,9 @@ server/data/
 server/uploads/
 server/data/simulator-auth.json
 
+# Public tunnel helper (downloaded on demand)
+deploy/bin/
+
 # Android
 android/.gradle/
 android/build/

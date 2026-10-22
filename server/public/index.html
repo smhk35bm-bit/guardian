@@ -102,6 +102,7 @@
         <button class="tab" data-tab="usage">استخدام التطبيقات</button>
         <button class="tab" data-tab="calls">المكالمات</button>
         <button class="tab" data-tab="sms">الرسائل</button>
+        <button class="tab" data-tab="live">البث المباشر</button>
         <button class="tab" data-tab="media">الصور والشاشات</button>
         <button class="tab" data-tab="timeline">السجل الزمني</button>
         <button class="tab" data-tab="apps">التطبيقات المثبتة</button>
@@ -180,6 +181,26 @@
       </section>
 
       <!-- الوسائط -->
+      <section class="panel" data-panel="live">
+        <div class="panel-head">
+          <h3>البث المباشر</h3>
+          <span class="live-badge" id="live-badge">غير نشط</span>
+        </div>
+        <div class="live-controls">
+          <button class="btn btn-primary btn-sm" id="live-screen-btn">بث الشاشة</button>
+          <button class="btn btn-ghost btn-sm" id="live-camera-btn">بث الكاميرا</button>
+          <button class="btn btn-danger btn-sm" id="live-stop-btn" disabled>إيقاف البث</button>
+        </div>
+        <div class="live-stage" id="live-stage">
+          <canvas id="live-canvas"></canvas>
+          <div class="live-hint" id="live-hint">
+            اختر «بث الشاشة» أو «بث الكاميرا» لعرض مباشر من الجهاز.<br />
+            يُرسَل الفيديو كإطارات JPEG صغيرة ليعمل جيداً على شبكة 4G.
+          </div>
+        </div>
+        <p class="muted" id="live-meta">لا بث حالي.</p>
+      </section>
+
       <section class="panel" data-panel="media">
         <div class="panel-head">
           <h3>لقطات الشاشة والصور</h3>
