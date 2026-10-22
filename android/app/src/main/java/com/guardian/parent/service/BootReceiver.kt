@@ -3,7 +3,9 @@ package com.guardian.parent.service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import com.guardian.parent.core.CollectorIds
 import com.guardian.parent.core.Logger
+import com.guardian.parent.core.Notifications
 import com.guardian.parent.data.LocalStore
 
 /**
@@ -32,6 +34,19 @@ class BootReceiver : BroadcastReceiver() {
 
         Logger.i("Boot received, restarting the monitoring service")
         MonitorService.start(context)
+
+        // The screen capture consent never survives a reboot: Android requires
+        // a fresh one. Offer the one-tap renewal right away when the screen
+        // collector is enabled, instead of waiting for the parent to notice.
+        try {
+            if (!MediaProjectionHolder.isActive() &&
+                store.collectorEnabled(CollectorIds.SCREENSHOT)
+            ) {
+                Notifications.notifyConsentNeeded(context)
+            }
+        } catch (t: Throwable) {
+            Logger.w("Unable to post the screen capture reminder after boot", t)
+        }
     }
 
     companion object {

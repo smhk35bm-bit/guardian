@@ -33,6 +33,9 @@ class PermissionActivity : AppCompatActivity() {
 
     private lateinit var adapter: PermissionAdapter
 
+    /** Avoids launching the system dialog twice on configuration changes. */
+    private var autoRequestDone = false
+
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
@@ -55,6 +58,9 @@ class PermissionActivity : AppCompatActivity() {
                 MediaProjectionHolder.storeConsent(result.resultCode, data)
                 MonitorService.startWithProjection(this)
                 Toast.makeText(this, R.string.screen_capture_started, Toast.LENGTH_SHORT).show()
+                // When the activity was opened from the notification the user
+                // only wanted to re-grant: do not keep the list on screen.
+                if (autoRequestDone) finish()
             } catch (t: Throwable) {
                 Logger.e("Unable to start the screen capture", t)
             }
@@ -92,6 +98,26 @@ class PermissionActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         refresh()
+        maybeAutoRequestConsent()
+    }
+
+    /**
+     * Opens the system consent dialog when the activity was started from the
+     * "grant screen capture" notification.
+     *
+     * This is still a real, explicit user action: the notification tap opens
+     * this screen and the system dialog is shown by Android itself. Nothing is
+     * granted automatically.
+     */
+    private fun maybeAutoRequestConsent() {
+        if (autoRequestDone) return
+        val requested = intent?.getBooleanExtra(EXTRA_REQUEST_SCREEN_CAPTURE, false) == true
+        if (!requested) return
+        autoRequestDone = true
+        intent?.removeExtra(EXTRA_REQUEST_SCREEN_CAPTURE)
+        if (!MediaProjectionHolder.isActive()) {
+            startConsentDialog()
+        }
     }
 
     private fun refresh() {
@@ -280,6 +306,11 @@ class PermissionActivity : AppCompatActivity() {
             refresh()
             return
         }
+        startConsentDialog()
+    }
+
+    /** Shows the system consent dialog; the app cannot capture anything without it. */
+    private fun startConsentDialog() {
         try {
             val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
                 ?: return
@@ -288,5 +319,14 @@ class PermissionActivity : AppCompatActivity() {
             Logger.e("Unable to ask for the screen capture consent", t)
             Toast.makeText(this, R.string.error_generic, Toast.LENGTH_SHORT).show()
         }
+    }
+
+    companion object {
+        /**
+         * When `true` in the launch intent, the activity immediately shows the
+         * system screen capture dialog (used by the notification action).
+         */
+        const val EXTRA_REQUEST_SCREEN_CAPTURE =
+            "com.guardian.parent.extra.REQUEST_SCREEN_CAPTURE"
     }
 }

@@ -9,6 +9,12 @@
     <string name="notif_channel_description">إشعار دائم يوضّح أن المراقبة العائلية قيد التشغيل على هذا الجهاز</string>
     <string name="notif_title">Guardian — المراقبة فعّالة</string>
     <string name="notif_text">مراقبة الجهاز «%1$s» قيد التشغيل، وتُرسل البيانات إلى لوحة تحكم الأهل</string>
+    <string name="notif_consent_channel_name">إذن التقاط الشاشة</string>
+    <string name="notif_consent_channel_description">تنبيه عندما يطلب النظام موافقة جديدة لالتقاط الشاشة</string>
+    <string name="notif_consent_needed_short">إذن الشاشة مطلوب</string>
+    <string name="notif_consent_action">منح الإذن</string>
+    <string name="notif_consent_title">إذن التقاط الشاشة مطلوب</string>
+    <string name="notif_consent_text">يطلب أندرويد موافقة جديدة على التقاط الشاشة (بعد إعادة التشغيل أو انتهاء الجلسة). انقر «منح الإذن» ثم أكّد نافذة النظام لتعود المراقبة للعمل.</string>
 
     <!-- ================= Enrollment ================= -->
     <string name="enroll_title">ربط الجهاز</string>

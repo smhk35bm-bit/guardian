@@ -1,13 +1,16 @@
 package com.guardian.parent.service
 
 import android.app.Notification
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
 import androidx.lifecycle.LifecycleService
 import com.guardian.parent.core.CollectorIds
@@ -21,6 +24,7 @@ import com.guardian.parent.data.RemoteConfig
 import com.guardian.parent.data.Repo
 import com.guardian.parent.net.DeviceSocket
 import com.guardian.parent.service.live.LiveStreamManager
+import com.guardian.parent.service.capture.ScreenCaptureSource
 import com.guardian.parent.service.collectors.CallLogCollector
 import com.guardian.parent.service.collectors.CameraCollector
 import com.guardian.parent.service.collectors.HeartbeatCollector
@@ -75,6 +79,25 @@ class MonitorService : LifecycleService() {
     private lateinit var liveManager: LiveStreamManager
 
     /**
+     * Set when the parent asked for the screen while no consent was active.
+     *
+     * Android shows its consent dialog only for a foreground activity, so the
+     * service cannot ask by itself: it posts a notification that opens
+     * [com.guardian.parent.ui.PermissionActivity] with one tap. When the
+     * consent arrives the stream is resumed, so the parent does not have to
+     * press "start" again.
+     */
+    @Volatile
+    private var pendingScreenLive = false
+
+    /** When the pending request was made, so it does not resume days later. */
+    @Volatile
+    private var pendingScreenLiveAt = 0L
+
+    /** Whether the dynamic screen on/unlock receiver is registered. */
+    private var screenReceiverRegistered = false
+
+    /**
      * The foreground service types that were requested at runtime.
      *
      * Android 14 refuses the camera and the screen capture while the service
@@ -114,6 +137,8 @@ class MonitorService : LifecycleService() {
 
         Notifications.ensureChannel(this)
         promoteToForeground()
+        MediaProjectionHolder.addListener(projectionListener)
+        registerScreenStateReceiver()
         isRunning = true
         Logger.i("Guardian monitoring service created")
     }
@@ -152,6 +177,8 @@ class MonitorService : LifecycleService() {
         Logger.i("Guardian monitoring service stopped")
         isRunning = false
         instance = null
+        MediaProjectionHolder.removeListener(projectionListener)
+        unregisterScreenStateReceiver()
         try {
             liveManager.stop()
         } catch (t: Throwable) {
@@ -205,14 +232,28 @@ class MonitorService : LifecycleService() {
                         "INTERNAL"
                     }
                     if (error == null) {
+                        pendingScreenLive = false
+                        Notifications.cancelConsent(this@MonitorService)
                         sendLiveState("started", source, null)
                     } else {
+                        if (error == "NO_CONSENT") {
+                            // Remember the request: as soon as the user grants
+                            // the consent from the notification, the stream
+                            // starts without another command from the parent.
+                            pendingScreenLive = true
+                            pendingScreenLiveAt = System.currentTimeMillis()
+                            Notifications.notifyConsentNeeded(this@MonitorService)
+                        }
                         sendLiveState("error", source, error)
                     }
                 }
             }
 
             "live.stop" -> {
+                pendingScreenLive = false
+                if (MediaProjectionHolder.isActive()) {
+                    Notifications.cancelConsent(this)
+                }
                 liveManager.stop()
                 sendLiveState("stopped", "", null)
             }
@@ -235,6 +276,126 @@ class MonitorService : LifecycleService() {
     // ------------------------------------------------------------------
     // Screen capture consent
     // ------------------------------------------------------------------
+
+    /**
+     * `true` when the system consent for the screen capture is missing.
+     *
+     * The permanent notification then carries a "grant" action, so the user
+     * can renew it with one tap after a reboot or after the system revoked the
+     * session. There is no way to grant it automatically: Android always shows
+     * its own dialog and the user must confirm it.
+     */
+    private fun needsScreenConsent(): Boolean {
+        if (MediaProjectionHolder.isActive()) return false
+        return pendingScreenLive || store.collectorEnabled(CollectorIds.SCREENSHOT)
+    }
+
+    /** Follows the consent: resumes a pending stream or reminds the user. */
+    private val projectionListener: (Boolean) -> Unit = { active ->
+        try {
+            onProjectionStateChanged(active)
+        } catch (t: Throwable) {
+            Logger.w("Unable to handle the screen capture state change", t)
+        }
+    }
+
+    private fun onProjectionStateChanged(active: Boolean) {
+        if (active) {
+            Notifications.cancelConsent(this)
+            promoteToForeground()
+            if (pendingScreenLive) {
+                scope.launch { resumePendingScreenLive() }
+            }
+            return
+        }
+
+        // The consent is gone (system revoke, expired session, process was
+        // restarted). The virtual display is bound to the dead projection, so
+        // it has to be dropped; the next consent creates a fresh one.
+        val screenWasLive = liveManager.activeSource() == LiveStreamManager.SOURCE_SCREEN
+        if (screenWasLive) {
+            pendingScreenLive = true
+            pendingScreenLiveAt = System.currentTimeMillis()
+            liveManager.stop()
+        }
+        ScreenCaptureSource.stop()
+        promoteToForeground()
+        if (pendingScreenLive) {
+            Notifications.notifyConsentNeeded(this)
+        }
+    }
+
+    /** Starts the screen stream the parent asked for before the consent arrived. */
+    private fun resumePendingScreenLive() {
+        if (!pendingScreenLive) return
+        if (System.currentTimeMillis() - pendingScreenLiveAt > PENDING_LIVE_TTL_MS) {
+            Logger.i("The pending live screen request expired")
+            pendingScreenLive = false
+            return
+        }
+        val error = try {
+            liveManager.startScreen()
+        } catch (t: Throwable) {
+            Logger.e("Unable to resume the live screen stream", t)
+            "INTERNAL"
+        }
+        if (error == null) {
+            pendingScreenLive = false
+            Notifications.cancelConsent(this)
+            sendLiveState("started", "screen", null)
+        } else {
+            sendLiveState("error", "screen", error)
+            if (error == "NO_CONSENT") {
+                Notifications.notifyConsentNeeded(this)
+            }
+        }
+    }
+
+    /** Registers the screen on/unlock listener that re-offers the consent. */
+    private fun registerScreenStateReceiver() {
+        if (screenReceiverRegistered) return
+        try {
+            val filter = IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_USER_PRESENT)
+            }
+            ContextCompat.registerReceiver(
+                this,
+                screenStateReceiver,
+                filter,
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+            screenReceiverRegistered = true
+        } catch (t: Throwable) {
+            Logger.w("Unable to register the screen state receiver", t)
+        }
+    }
+
+    private fun unregisterScreenStateReceiver() {
+        if (!screenReceiverRegistered) return
+        screenReceiverRegistered = false
+        try {
+            unregisterReceiver(screenStateReceiver)
+        } catch (t: Throwable) {
+            Logger.w("Unable to unregister the screen state receiver", t)
+        }
+    }
+
+    /**
+     * After an unlock the session may have been revoked while the device was
+     * idle; offering the one-tap consent again avoids a silent black stream.
+     */
+    private val screenStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            try {
+                if (!store.isEnrolled) return
+                if (!needsScreenConsent()) return
+                Notifications.notifyConsentNeeded(this@MonitorService)
+            } catch (t: Throwable) {
+                Logger.w("Unable to handle the screen state broadcast", t)
+            }
+        }
+    }
 
     /**
      * Creates the screen capture projection out of the stored consent.
@@ -302,7 +463,11 @@ class MonitorService : LifecycleService() {
     // ------------------------------------------------------------------
 
     private fun promoteToForeground() {
-        val notification = Notifications.build(this, store.deviceName.ifBlank { deviceLabel() })
+        val notification = Notifications.build(
+            this,
+            store.deviceName.ifBlank { deviceLabel() },
+            needsScreenConsent()
+        )
         startForegroundWith(currentTypes(), notification)
     }
 
@@ -492,6 +657,9 @@ class MonitorService : LifecycleService() {
         const val ACTION_ATTACH_PROJECTION = "com.guardian.parent.action.ATTACH_PROJECTION"
 
         private const val TICK_MS = 5_000L
+
+        /** How long a "start the screen" request waits for the consent. */
+        private const val PENDING_LIVE_TTL_MS = 10 * 60_000L
 
         /**
          * The extra the platform used before Android 14 to hand the projection

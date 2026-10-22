@@ -47,9 +47,18 @@ class EnrollmentActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_enrollment)
 
         store = LocalStore(this)
+        if (store.isEnrolled) {
+            // The phone is already paired: opening the app icon shows the
+            // dashboard instead of asking for a pairing code again.
+            startActivity(Intent(this, MainActivity::class.java))
+            finish()
+            return
+        }
+
+        setContentView(R.layout.activity_enrollment)
+
         serverInput = findViewById(R.id.serverUrlInput)
         codeInput = findViewById(R.id.codeInput)
         enrollButton = findViewById(R.id.enrollButton)
