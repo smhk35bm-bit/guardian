@@ -94,14 +94,15 @@ class EnrollmentActivity : AppCompatActivity() {
                 try {
                     Outcome.Success(Repo(applicationContext).enroll(url, code, identity))
                 } catch (e: ApiException) {
-                    // The contract returns the human readable reason in
-                    // `error.message`; show it exactly as it was sent.
-                    Outcome.Failure(e.message)
+                    // The contract returns the human readable reason in `error.message`; show it as-is.
+                    val msg = e.message
+                    Outcome.Failure(if (msg.isNullOrBlank()) getString(R.string.error_generic) else msg)
                 } catch (e: NetworkException) {
                     Outcome.Failure(getString(R.string.error_network))
                 } catch (e: Exception) {
                     Logger.e("The pairing failed", e)
-                    Outcome.Failure(e.message ?: getString(R.string.error_generic))
+                    val msg = e.message
+                    Outcome.Failure(if (msg.isNullOrBlank()) getString(R.string.error_generic) else msg)
                 }
             }
             setBusy(false)
