@@ -14,7 +14,7 @@
     <string name="enroll_title">ربط الجهاز</string>
     <string name="enroll_disclosure">تنبيه مهم: هذا التطبيق يجمع الموقع الحالي، واستخدام التطبيقات، وسجلّ المكالمات، والرسائل النصية، ولقطات الشاشة، وصور الكاميرا، ثم يرسلها إلى لوحة تحكم الأهل على خادم وليّ الأمر.\n\nشروط الاستخدام:\n• يُربط الجهاز بموافقة صريحة من وليّ الأمر.\n• يبقى إشعار دائم غير قابل للإخفاء في شريط الحالة طوال فترة عمل التطبيق.\n• يستطيع المستخدم في أي وقت فتح التطبيق لمعرفة حالة المراقبة، وإيقاف الخدمة، وإلغاء الربط.\n• لا يحتوي التطبيق على أي أدوات لإخفاء نفسه أو لإخفاء آثاره.</string>
     <string name="enroll_server_url">عنوان خادم وليّ الأمر</string>
-    <string name="enroll_server_hint">https://vps.example.com/api</string>
+    <string name="enroll_server_hint">https://guardian-server-nugk.onrender.com/api</string>
     <string name="enroll_code">كود الربط (8 أرقام)</string>
     <string name="enroll_button">اربط الجهاز</string>
     <string name="enroll_progress">جارٍ الربط…</string>

@@ -15,14 +15,22 @@ const CODE_TTL_MIN = 10;
 const CODE_LENGTH = 8;
 
 /**
- * Absolute base URL of this server, as seen by the client.
- * PUBLIC_URL wins when set (custom domain); otherwise the request's own
- * scheme + Host header is used, which is correct behind Render/NGINX because
- * `trust proxy` is enabled.
+ * Absolute base URL of this server, as the client sees it.
+ *
+ * The host the request arrived on is the address the phone can reach, so it
+ * is the primary source. PUBLIC_URL is only a fallback for local/private
+ * hosts (localhost, LAN IPs) where the outside world needs a different
+ * address — e.g. a tunnel or a public domain in front of a private server.
  */
 function baseUrl(req) {
-  if (config.publicUrl) return config.publicUrl;
-  return `${req.protocol}://${req.get('host')}`;
+  const host = req.get('host') || '';
+  const isPrivate = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(host)
+    || /^10\./.test(host)
+    || /^192\.168\./.test(host)
+    || /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+  const derived = `${req.protocol}://${host}`;
+  if (isPrivate && config.publicUrl) return config.publicUrl;
+  return derived;
 }
 
 /**

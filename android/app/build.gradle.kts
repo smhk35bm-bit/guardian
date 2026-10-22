@@ -13,6 +13,13 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0.0"
+
+        // The address of the parent's server, pre-filled on the pairing screen.
+        // Override it at build time:
+        //   ./gradlew assembleDebug -PguardianServerUrl=https://example.com/api
+        val serverUrl = (project.findProperty("guardianServerUrl") as String?)
+            ?: "https://guardian-server-nugk.onrender.com/api"
+        buildConfigField("String", "DEFAULT_SERVER_URL", "\"$serverUrl\"")
     }
 
     buildTypes {

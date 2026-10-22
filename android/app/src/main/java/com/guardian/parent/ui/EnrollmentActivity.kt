@@ -56,7 +56,9 @@ class EnrollmentActivity : AppCompatActivity() {
         progress = findViewById(R.id.progress)
         errorText = findViewById(R.id.errorText)
 
-        serverInput.setText(store.serverUrl ?: getString(R.string.enroll_server_hint))
+        // The address is pre-filled with the server that this build was made for,
+        // so the user normally only has to type the pairing code.
+        serverInput.setText(store.serverUrl ?: BuildConfig.DEFAULT_SERVER_URL)
         enrollButton.setOnClickListener { enroll() }
     }
 
