@@ -15,6 +15,8 @@ export function rateLimit({ limit, windowMs, keyFn }) {
       buckets.set(key, bucket);
     }
     bucket.count += 1;
+    // Remember the bucket so a successful request can free the budget.
+    req.rateLimitKey = key;
 
     const remaining = Math.max(0, limit - bucket.count);
     res.setHeader('X-RateLimit-Limit', String(limit));
@@ -31,6 +33,18 @@ export function rateLimit({ limit, windowMs, keyFn }) {
     }
     return next();
   };
+}
+
+/**
+ * Frees the budget of the current request.
+ *
+ * A successful login must not consume the brute-force allowance: otherwise
+ * someone typing the right password after a few typos (or simply logging in
+ * from several devices) can lock himself out for the rest of the window.
+ */
+export function resetLimit(req) {
+  const key = req?.rateLimitKey;
+  if (key) buckets.delete(key);
 }
 
 /** Drops expired buckets so the map does not grow without bound. */

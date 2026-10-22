@@ -4,6 +4,7 @@ import { hashPassword, verifyPassword } from '../lib/password.js';
 import { issueToken } from '../lib/jwt.js';
 import { config } from '../config.js';
 import { ok, fail, asyncHandler } from '../lib/util.js';
+import { resetLimit } from '../lib/ratelimit.js';
 import { requireParent } from '../middleware/auth.js';
 
 export const authRouter = Router();
@@ -53,6 +54,7 @@ authRouter.post(
     const user = await q.get('SELECT * FROM users WHERE id = ?', lastInsertRowid);
     const token = issueToken({ sub: user.id, email: user.email }, { kind: 'parent' });
     setSessionCookie(res, token);
+    resetLimit(req);
     return ok(res, { token, user: publicUser(user) }, undefined, 201);
   }),
 );
@@ -71,6 +73,7 @@ authRouter.post(
 
     const token = issueToken({ sub: user.id, email: user.email }, { kind: 'parent' });
     setSessionCookie(res, token);
+    resetLimit(req);
     return ok(res, { token, user: publicUser(user) });
   }),
 );
