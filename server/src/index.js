@@ -12,6 +12,7 @@ import { fail, HttpError } from './lib/util.js';
 import { authRouter } from './routes/auth.routes.js';
 import { devicesRouter } from './routes/devices.routes.js';
 import { dataRouter } from './routes/data.routes.js';
+import { safetyRouter } from './routes/safety.routes.js';
 import { attachRealtime } from './realtime.js';
 
 const app = express();
@@ -86,6 +87,7 @@ app.get('/api/health', (_req, res) => {
 app.use('/api/auth', authRouter);
 app.use('/api/devices', devicesRouter);
 app.use('/api/devices', dataRouter);
+app.use('/api', safetyRouter);
 
 app.use('/api', (_req, res) => fail(res, 404, 'NOT_FOUND', 'المسار غير موجود'));
 

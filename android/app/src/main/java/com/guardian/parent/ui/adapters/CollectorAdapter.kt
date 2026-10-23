@@ -37,6 +37,12 @@ class CollectorAdapter(
         Row(CollectorIds.APPS, R.string.collector_apps, R.string.collector_apps_desc),
         Row(CollectorIds.CALLS, R.string.collector_calls, R.string.collector_calls_desc),
         Row(CollectorIds.SMS, R.string.collector_sms, R.string.collector_sms_desc),
+        Row(CollectorIds.CONTACTS, R.string.collector_contacts, R.string.collector_contacts_desc),
+        Row(
+            CollectorIds.NOTIFICATIONS,
+            R.string.collector_notifications,
+            R.string.collector_notifications_desc
+        ),
         Row(CollectorIds.SCREENSHOT, R.string.collector_screenshot, R.string.collector_screenshot_desc),
         Row(CollectorIds.CAMERA, R.string.collector_camera, R.string.collector_camera_desc),
         Row(CollectorIds.HEARTBEAT, R.string.collector_heartbeat, R.string.collector_heartbeat_desc)

@@ -91,6 +91,8 @@
           <p id="current-device-meta" class="muted">—</p>
         </div>
         <div class="device-head-actions">
+          <button class="btn btn-ghost btn-sm" id="ring-btn" title="تشغيل رنين قوي على الجهاز للعثور عليه">رنين الجهاز</button>
+          <button class="btn btn-ghost btn-sm" id="ring-stop-btn" hidden>إيقاف الرنين</button>
           <button class="btn btn-ghost btn-sm" id="rename-btn">إعادة تسمية</button>
           <button class="btn btn-danger btn-sm" id="revoke-btn">إلغاء الربط</button>
         </div>
@@ -102,9 +104,12 @@
         <button class="tab" data-tab="usage">استخدام التطبيقات</button>
         <button class="tab" data-tab="calls">المكالمات</button>
         <button class="tab" data-tab="sms">الرسائل</button>
+        <button class="tab" data-tab="contacts">جهات الاتصال</button>
         <button class="tab" data-tab="live">البث المباشر</button>
         <button class="tab" data-tab="media">الصور والشاشات</button>
         <button class="tab" data-tab="timeline">السجل الزمني</button>
+        <button class="tab" data-tab="alerts">التنبيهات <span class="tab-badge" id="alerts-badge" hidden>0</span></button>
+        <button class="tab" data-tab="geofences">المواقع الآمنة</button>
         <button class="tab" data-tab="apps">التطبيقات المثبتة</button>
       </nav>
 
@@ -187,9 +192,10 @@
           <span class="live-badge" id="live-badge">غير نشط</span>
         </div>
         <div class="live-controls">
-          <button class="btn btn-primary btn-sm" id="live-screen-btn">بث الشاشة</button>
-          <button class="btn btn-ghost btn-sm" id="live-camera-btn">بث الكاميرا</button>
+          <button class="btn btn-primary btn-sm" id="live-screen-btn">بث الشاشة + صوت</button>
+          <button class="btn btn-ghost btn-sm" id="live-camera-btn">بث الكاميرا + صوت</button>
           <button class="btn btn-ghost btn-sm" id="live-camera-switch-btn" disabled title="تبديل بين الكاميرا الأمامية والخلفية">تبديل الكاميرا</button>
+          <button class="btn btn-ghost btn-sm" id="live-audio-toggle" title="كتم أو تشغيل صوت المكان">الصوت: مفعّل</button>
           <button class="btn btn-danger btn-sm" id="live-stop-btn" disabled>إيقاف البث</button>
         </div>
         <div class="live-stage" id="live-stage">
@@ -237,6 +243,46 @@
           </label>
         </div>
         <div id="apps-list" class="list"></div>
+      </section>
+
+      <!-- التنبيهات -->
+      <section class="panel" data-panel="alerts">
+        <div class="panel-head">
+          <h3>التنبيهات</h3>
+          <button class="btn btn-ghost btn-sm" id="alerts-read-all">تعليم الكل كمقروء</button>
+        </div>
+        <p class="muted">
+          تُسجّل هنا التنبيهات المهمة: دخول الطفل إلى موقع آمن أو خروجه منه.
+        </p>
+        <div id="alerts-list" class="list"></div>
+      </section>
+
+      <!-- المواقع الآمنة -->
+      <section class="panel" data-panel="geofences">
+        <div class="panel-head">
+          <h3>المواقع الآمنة</h3>
+          <button class="btn btn-ghost btn-sm" id="geofence-use-current">استخدم الموقع الحالي</button>
+        </div>
+        <p class="muted">
+          يُنبَّه ولي الأمر عند دخول الطفل إلى الموقع أو خروجه منه. نصف القطر بالمتر.
+        </p>
+        <form class="geofence-form" id="geofence-form">
+          <input id="geofence-name" placeholder="اسم الموقع (المنزل، المدرسة…)" required maxlength="120" />
+          <input id="geofence-lat" placeholder="خط العرض" type="number" step="any" required />
+          <input id="geofence-lng" placeholder="خط الطول" type="number" step="any" required />
+          <input id="geofence-radius" placeholder="نصف القطر (م)" type="number" min="30" max="20000" value="200" />
+          <button class="btn btn-primary btn-sm" type="submit">إضافة</button>
+        </form>
+        <div id="geofences-list" class="list"></div>
+      </section>
+
+      <!-- جهات الاتصال -->
+      <section class="panel" data-panel="contacts">
+        <div class="panel-head">
+          <h3>جهات الاتصال</h3>
+          <input id="contacts-search" placeholder="ابحث بالاسم أو الرقم" />
+        </div>
+        <div id="contacts-list" class="list"></div>
       </section>
     </main>
   </div>

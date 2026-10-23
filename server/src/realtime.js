@@ -82,14 +82,19 @@ export function isDeviceOnline(deviceId) {
  *   [version:1][source:1][flags:2][seq:4][length:4]
  * and the server prepends the device id, producing
  *   [version:1][source:1][flags:2][deviceId:4][seq:4][length:4]
- * followed by the JPEG bytes. The image itself is never decoded.
+ * followed by the JPEG bytes (or PCM audio when flags has the audio bit).
+ * The image itself is never decoded.
  */
 function relayFrame(senderWs, info, raw) {
   if (raw.length <= IN_HEADER) return;
   if (raw.readUInt8(0) !== PROTOCOL_VERSION) return;
 
+  // 1 = screen frame, 2 = camera frame, 3/4 = microphone PCM for either
+  // source, distinguished by the audio flag.
   const source = raw.readUInt8(1);
-  if (source !== 1 && source !== 2) return;
+  if (source < 1 || source > 4) return;
+
+  const flags = raw.readUInt16BE(2);
 
   const length = raw.readUInt32BE(8);
   if (length === 0 || length > raw.length - IN_HEADER) return;
@@ -97,7 +102,7 @@ function relayFrame(senderWs, info, raw) {
   const out = Buffer.allocUnsafe(OUT_HEADER + length);
   out.writeUInt8(PROTOCOL_VERSION, 0);
   out.writeUInt8(source, 1);
-  out.writeUInt16BE(0, 2);
+  out.writeUInt16BE(flags, 2);
   out.writeUInt32BE(info.deviceId, 4);
   out.writeUInt32BE(raw.readUInt32BE(4), 8);
   out.writeUInt32BE(length, 12);
@@ -117,7 +122,14 @@ function relayFrame(senderWs, info, raw) {
 
 async function handleParentCommand(ws, info, msg) {
   const type = msg?.type;
-  if (type !== 'live.start' && type !== 'live.stop') return false;
+  if (
+    type !== 'live.start' &&
+    type !== 'live.stop' &&
+    type !== 'live.switch' &&
+    type !== 'device.command'
+  ) {
+    return false;
+  }
 
   const deviceId = Number(msg.deviceId);
   if (!Number.isInteger(deviceId) || deviceId <= 0) {
@@ -149,8 +161,52 @@ async function handleParentCommand(ws, info, msg) {
     return true;
   }
 
+  if (type === 'live.switch') {
+    const facing = msg.facing === 'front' ? 'front' : 'back';
+    const delivered = sendToDevice(deviceId, { type: 'live.switch', facing });
+    if (!delivered) {
+      ws.send(JSON.stringify({
+        type: 'live.state',
+        deviceId,
+        state: 'error',
+        error: 'DEVICE_OFFLINE',
+      }));
+    }
+    return true;
+  }
+
+  if (type === 'device.command') {
+    // Remote actions that only need the control socket: currently the loud
+    // ring that helps finding a misplaced phone. Every command is explicit
+    // and logged by the device itself; nothing is hidden from the child.
+    const allowed = new Set(['alarm', 'stop_alarm']);
+    const action = allowed.has(String(msg.action)) ? String(msg.action) : null;
+    if (!action) {
+      ws.send(JSON.stringify({
+        type: 'device.command.result',
+        deviceId,
+        action: msg.action ?? null,
+        ok: false,
+        error: 'BAD_COMMAND',
+      }));
+      return true;
+    }
+    const delivered = sendToDevice(deviceId, { type: 'device.command', action });
+    ws.send(JSON.stringify({
+      type: 'device.command.result',
+      deviceId,
+      action,
+      ok: delivered,
+      // The final result comes back from the device; this first message only
+      // tells the dashboard whether the command left the server.
+      pending: delivered,
+      error: delivered ? undefined : 'DEVICE_OFFLINE',
+    }));
+    return true;
+  }
+
   const source = msg.source === 'camera' ? 'camera' : 'screen';
-  const delivered = sendToDevice(deviceId, { type: 'live.start', source });
+  const delivered = sendToDevice(deviceId, { type: 'live.start', source, audio: !!msg.audio });
   if (!delivered) {
     ws.send(JSON.stringify({
       type: 'live.state',
@@ -242,6 +298,20 @@ export function attachRealtime(server) {
             deviceId: info.deviceId,
             state: typeof msg.state === 'string' ? msg.state : 'error',
             source: msg.source === 'camera' ? 'camera' : msg.source === 'screen' ? 'screen' : undefined,
+            error: typeof msg.error === 'string' ? msg.error : undefined,
+          });
+        } else if (msg?.type === 'live.camera') {
+          sendToParents(info.userId, {
+            type: 'live.camera',
+            deviceId: info.deviceId,
+            facing: msg.facing === 'front' ? 'front' : 'back',
+          });
+        } else if (msg?.type === 'device.command.result') {
+          sendToParents(info.userId, {
+            type: 'device.command.result',
+            deviceId: info.deviceId,
+            action: typeof msg.action === 'string' ? msg.action : '',
+            ok: msg.ok !== false,
             error: typeof msg.error === 'string' ? msg.error : undefined,
           });
         }

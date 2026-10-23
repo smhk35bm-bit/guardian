@@ -196,6 +196,24 @@ class PermissionActivity : AppCompatActivity() {
         )
 
         rows += row(
+            id = "microphone",
+            titleRes = R.string.perm_microphone,
+            descriptionRes = R.string.perm_microphone_desc,
+            granted = Permissions.microphoneGranted(this),
+            action = PermissionAction.GRANT,
+            actionLabelRes = R.string.perm_action_grant
+        )
+
+        rows += row(
+            id = "notification_access",
+            titleRes = R.string.perm_notification_access,
+            descriptionRes = R.string.perm_notification_access_desc,
+            granted = Permissions.notificationAccessGranted(this),
+            action = PermissionAction.NOTIFICATION_ACCESS,
+            actionLabelRes = R.string.perm_action_settings
+        )
+
+        rows += row(
             id = "screen_capture",
             titleRes = R.string.perm_screen_capture,
             descriptionRes = R.string.perm_screen_capture_desc,
@@ -224,6 +242,7 @@ class PermissionActivity : AppCompatActivity() {
         when (row.action) {
             PermissionAction.GRANT -> requestPermissionsFor(row.id)
             PermissionAction.SETTINGS -> openUsageAccessSettings()
+            PermissionAction.NOTIFICATION_ACCESS -> openNotificationAccessSettings()
             PermissionAction.SCREEN_CAPTURE -> toggleScreenCapture()
         }
     }
@@ -254,6 +273,7 @@ class PermissionActivity : AppCompatActivity() {
             "sms" -> arrayOf(Manifest.permission.READ_SMS)
             "contacts" -> arrayOf(Manifest.permission.READ_CONTACTS)
             "camera" -> arrayOf(Manifest.permission.CAMERA)
+            "microphone" -> arrayOf(Manifest.permission.RECORD_AUDIO)
             else -> return
         }
         permissionLauncher.launch(permissions)
@@ -267,6 +287,24 @@ class PermissionActivity : AppCompatActivity() {
         } catch (t: Throwable) {
             Logger.w("Unable to open the usage access settings", t)
             openAppDetailsSettings()
+        }
+    }
+
+    /** Opens the system list where the user enables notification access. */
+    private fun openNotificationAccessSettings() {
+        try {
+            val intent = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+        } catch (t: Throwable) {
+            Logger.w("Unable to open the notification access settings", t)
+            try {
+                startActivity(
+                    Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            } catch (inner: Throwable) {
+                openAppDetailsSettings()
+            }
         }
     }
 

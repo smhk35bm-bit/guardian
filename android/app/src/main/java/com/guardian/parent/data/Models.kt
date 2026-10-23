@@ -136,6 +136,37 @@ data class AppInfoPayload(
     }
 }
 
+/** One address book entry; the phone number is the server-side key. */
+data class ContactPayload(
+    val name: String?,
+    val number: String,
+    val email: String?
+) {
+    fun toJson(): JSONObject = jsonObject {
+        put("name", name ?: JSONObject.NULL)
+        put("number", number)
+        put("email", email ?: JSONObject.NULL)
+    }
+}
+
+/** One notification the child received, as reported by the listener. */
+data class NotificationPayload(
+    val packageName: String,
+    val label: String?,
+    val title: String?,
+    val text: String?,
+    val at: Long
+) {
+    fun toJson(): JSONObject = jsonObject {
+        put("type", "notification")
+        put("package", packageName)
+        put("label", label ?: JSONObject.NULL)
+        put("title", title ?: JSONObject.NULL)
+        put("text", text ?: JSONObject.NULL)
+        put("at", at)
+    }
+}
+
 /** The device endpoints of the API contract, one per data kind. */
 enum class ItemKind(val path: String) {
     HEARTBEAT("heartbeat"),
@@ -143,6 +174,7 @@ enum class ItemKind(val path: String) {
     EVENT("events"),
     CALL("calls"),
     SMS("sms"),
+    CONTACTS("contacts"),
     APPS("apps"),
     SCREENSHOT("screenshots"),
     PHOTO("photos")

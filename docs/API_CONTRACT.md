@@ -1,7 +1,7 @@
 # عقد API — Guardian Parental Control
 
 > العقد المرجعي الذي يجب أن يطابقه كل من **السيرفر** (`server/`) و**تطبيق الأندرويد** (`android/`).
-> أي انحراف عن هذا العقد يُعتبر خطأ. آخر تحديث: v2 (بث مباشر).
+> أي انحراف عن هذا العقد يُعتبر خطأ. آخر تحديث: v3 (صوت البث، جهات الاتصال، المواقع الآمنة، التنبيهات، رنين الجهاز).
 
 ## 1. عام
 
@@ -74,13 +74,16 @@ ws://<host>/ws?token=<device-token>
 ```jsonc
 { "type": "live.start", "deviceId": 3, "source": "screen" }  // أو "camera"
 { "type": "live.stop",  "deviceId": 3 }
+{ "type": "live.switch", "deviceId": 3, "facing": "front" }  // أو "back"
 ```
 
 السيرفر يتحقق أن الجهاز يملكه نفس الأب، ثم:
 
 - السيرفر → الجهاز: `{ "type": "live.start", "source": "camera" }` أو `{ "type": "live.stop" }`
+  أو `{ "type": "live.switch", "facing": "front" }`
 - الجهاز → السيرفر → كل أجهزة الأب: `{ "type": "live.state", "deviceId": 3,
   "state": "started"|"stopped"|"error", "source": "screen", "error": "NO_CONSENT" }`
+- عند تبديل الكاميرا: `{ "type": "live.camera", "deviceId": 3, "facing": "front" }`
 
 أكواد الخطأ:
 
@@ -96,17 +99,17 @@ ws://<host>/ws?token=<device-token>
 
 #### الإطارات (Binary)
 
-الجهاز → السيرفر (12 بايت ثم JPEG):
+الجهاز → السيرفر (12 بايت ثم الحمولة):
 
 ```
 [0]      version = 1
-[1]      source   (1 = شاشة، 2 = كاميرا)
-[2..3]   flags    (0 حالياً)
+[1]      source   (1 = شاشة، 2 = كاميرا، 3 = صوت الشاشة، 4 = صوت الكاميرا)
+[2..3]   flags    (bit0 = 1 → الحمولة PCM وليست JPEG)
 [4..7]   seq      uint32 BE
-[8..11]  length   uint32 BE  (طول JPEG الذي يليه)
+[8..11]  length   uint32 BE  (طول الحمولة التي تليه)
 ```
 
-السيرفر يعيد التغليف بإضافة `deviceId` (16 بايت ثم JPEG):
+السيرفر يعيد التغليف بإضافة `deviceId` (16 بايت ثم الحمولة):
 
 ```
 [0]      version = 1
@@ -117,6 +120,11 @@ ws://<host>/ws?token=<device-token>
 [12..15] length   uint32 BE
 ```
 
+**الصوت (flags bit0 = 1):** الحمولة PCM 16-بت أحادي بتردّد **16000 هرتز**، بترتيب
+بايتات little-endian. لا يوجد ضغط ولا ترميز — المتصفح يحوّله إلى `AudioBuffer`
+ويشغّله مباشرة. تصل حزمة صوت كل ~100 مللي ثانية تقريباً. تدفّق الصوت مستقل عن الفيديو:
+يمكن أن تتوقف إطارات JPEG (شاشة ساكنة) ويستمر الصوت.
+
 - المعدّل المستهدف: إطار كل **200 مللي ثانية** (≈5 إطارات/ث) أثناء تغيّر الشاشة فعلياً،
   عرض ≤ 640px، جودة JPEG 45. الجهاز يخفّض الدقة/الجودة تلقائياً إذا امتلأ طابور الإرسال،
   ويعيدها تدريجياً عند تحسّن الشبكة.
@@ -126,6 +134,23 @@ ws://<host>/ws?token=<device-token>
   `96KB`، وعلى السيرفر عندما يتجاوز `bufferedAmount` للمستهلك `2MB`. النتيجة صورة
   "حاضرة" أقلّ انسيابية بدل تأخير متزايد.
 - لا يُخزَّن أي إطار على القرص أو في قاعدة البيانات.
+
+### 1.5 أوامر الجهاز (رنين الجهاز عن بُعد)
+
+الأب → السيرفر:
+
+```jsonc
+{ "type": "device.command", "deviceId": 3, "action": "alarm" }       // أو "stop_alarm"
+```
+
+- السيرفر → الجهاز: `{ "type": "device.command", "action": "alarm" }`
+- السيرفر → الأب الطالب: `{ "type": "device.command.result", "deviceId": 3,
+  "action": "alarm", "ok": true }` أو `{ "ok": false, "error": "DEVICE_OFFLINE" }`
+- الجهاز → السيرفر → كل أجهزة الأب: `{ "type": "device.command.result", "deviceId": 3,
+  "action": "alarm", "ok": true }`
+- أي `action` خارج القائمة يُرفض بـ `BAD_COMMAND`.
+
+الرنين يستخدم منبّه النظام بأقصى صوت، ويتوقف تلقائياً بعد 60 ثانية أو بأمر `stop_alarm`.
 
 ---
 
@@ -251,6 +276,26 @@ ws://<host>/ws?token=<device-token>
 // type: inbox | sent | draft
 ```
 
+### POST `/api/devices/:id/contacts`
+مزامنة دفتر العناوين كاملاً في طلب واحد. الرقم هو المفتاح الطبيعي، فيُحدَّث الاسم
+بدل تكرار الصف عند كل مزامنة. تُتجاهل العناصر بلا رقم.
+```jsonc
+// req
+{ "contacts": [
+  { "name": "أحمد", "number": "+966500000001", "email": "ahmed@example.com" },
+  { "name": "سارة", "number": "+966500000002" }
+] }
+// res 200
+{ "ok": true, "data": { "count": 2 } }
+```
+
+### POST `/api/devices/:id/events` — إشعارات الجهاز
+عند تفعيل «الوصول إلى الإشعارات» يرسل التطبيق حدثاً لكل إشعار:
+```jsonc
+{ "type": "notification", "package": "com.whatsapp", "label": "WhatsApp",
+  "title": "أحمد", "text": "وصلت البيت", "at": "2026-10-21T15:40:00.000Z" }
+```
+
 ### POST `/api/devices/:id/screenshots`  📎 multipart
 `file` = صورة PNG/JPG، `meta` = JSON string اختياري `{ "app":"com.x", "label":"Chrome" }`.
 ```jsonc
@@ -280,10 +325,47 @@ ws://<host>/ws?token=<device-token>
 | `GET /api/devices/:id/calls` | سجل المكالمات | `from`, `to`, `limit` |
 | `GET /api/devices/:id/sms` | الرسائل | `from`, `to`, `limit` |
 | `GET /api/devices/:id/apps` | التطبيقات المثبتة | — |
+| `GET /api/devices/:id/contacts` | دفتر عناوين الطفل | `q` (بحث بالاسم/الرقم), `limit` |
+| `GET /api/devices/:id/geofences` | المواقع الآمنة للجهاز | — |
 | `GET /api/devices/:id/media` | الوسائط | `kind` (screenshot/camera), `from`, `to`, `limit` |
 | `GET /api/devices/:id/media/:mediaId` | تنزيل ملف | — |
 | `GET /api/devices/:id/timeline` | جدول زمني موحّد لكل الأحداث | `from`, `to`, `limit` |
 | `GET /api/devices/:id/stats` | إحصائيات اليوم/الأسبوع | — |
+
+### 5.1 المواقع الآمنة — 🔑 Parent
+
+```jsonc
+// POST /api/devices/:id/geofences
+{ "name": "المنزل", "lat": 35.32758, "lng": -0.05293, "radiusM": 200 }
+// res 201 → دائرة الموقع (radiusM بين 30 و20000)
+
+// PATCH /api/devices/:id/geofences/:geoId
+{ "name": "المدرسة", "radiusM": 300, "active": true }
+
+// DELETE /api/devices/:id/geofences/:geoId → { "ok": true, "data": { "deleted": true } }
+```
+
+كل موقع يحمل `inside` (`null` قبل أول تحديث موقع، ثم `0/1`). يقيّم السيرفر الموقع عند
+استلام كل `POST /location` (مسافة haversine): عند أول رصد يُثبَّت الحالة بلا تنبيه،
+وبعدها يُنشأ تنبيه `geofence_enter` أو `geofence_exit` عند كل عبور فقط — لا تكرار.
+
+### 5.2 التنبيهات — 🔑 Parent
+
+| المسار | الوصف | query/body |
+|---|---|---|
+| `GET /api/alerts` | قائمة التنبيهات (الأحدث أولاً) | `limit`, `unread=1`, `deviceId` |
+| `POST /api/alerts/read` | تعليم كمقروء | `{ "ids": [1,2] }` أو `{ "ids": [] }` للكل |
+
+```jsonc
+// GET /api/alerts
+{ "ok": true, "data": [
+    { "id": 7, "deviceId": 3, "type": "geofence_exit", "title": "خرج من «المنزل»",
+      "body": "الجهاز غادر الموقع الآمن.", "at": "...", "read": false,
+      "payload": { "geofenceId": 1, "name": "المنزل", "lat": 35.4, "lng": -0.05 } }
+  ], "meta": { "count": 1, "unread": 1, "limit": 100 } }
+```
+
+عند إنشاء تنبيه يبثّ السيرفر لحظياً: `{ "type": "device.alert", "deviceId": 3, "data": {...} }`.
 
 ---
 

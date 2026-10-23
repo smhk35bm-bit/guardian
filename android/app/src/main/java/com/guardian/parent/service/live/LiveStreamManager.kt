@@ -12,8 +12,11 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
+import android.media.AudioFormat
+import android.media.AudioRecord
 import android.media.Image
 import android.media.ImageReader
+import android.media.MediaRecorder
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
@@ -45,6 +48,8 @@ class LiveStreamManager(
      */
     private var sink: ((source: Int, jpeg: ByteArray) -> Boolean)? = null
 
+    private var audioSink: ((source: Int, pcm: ByteArray) -> Boolean)? = null
+
     @Volatile
     private var activeSource: Int = SOURCE_NONE
 
@@ -53,8 +58,17 @@ class LiveStreamManager(
     @Volatile
     private var cameraFacing: Int = CameraCharacteristics.LENS_FACING_BACK
 
+    private var mic: MicCapture? = null
+
+    @Volatile
+    private var audioEnabled = false
+
     fun setSink(sink: ((source: Int, jpeg: ByteArray) -> Boolean)?) {
         this.sink = sink
+    }
+
+    fun setAudioSink(sink: ((source: Int, pcm: ByteArray) -> Boolean)?) {
+        this.audioSink = sink
     }
 
     fun isStreaming(): Boolean = activeSource != SOURCE_NONE
@@ -69,7 +83,7 @@ class LiveStreamManager(
 
     /** Starts mirroring the screen; returns `null` on success or an error code. */
     @Synchronized
-    fun startScreen(): String? {
+    fun startScreen(withAudio: Boolean = true): String? {
         stop()
         val projection = MediaProjectionHolder.current() ?: return "NO_CONSENT"
         if (!ScreenCaptureSource.ensureStarted(context, projection)) {
@@ -81,13 +95,14 @@ class LiveStreamManager(
         }
         ScreenCaptureSource.setFrameListener(consumer, Config.LIVE_FRAME_INTERVAL_MS)
         activeSource = SOURCE_SCREEN
+        if (withAudio) startAudio(SOURCE_SCREEN)
         Logger.i("Live screen stream started")
         return null
     }
 
     /** Starts mirroring the camera; returns `null` on success or an error code. */
     @Synchronized
-    fun startCamera(): String? {
+    fun startCamera(withAudio: Boolean = true): String? {
         stop()
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) !=
             PackageManager.PERMISSION_GRANTED
@@ -118,6 +133,7 @@ class LiveStreamManager(
         cameraSource = source
         cameraFacing = CameraCharacteristics.LENS_FACING_BACK
         activeSource = SOURCE_CAMERA
+        if (withAudio) startAudio(SOURCE_CAMERA)
         Logger.i("Live camera stream started")
         return null
     }
@@ -132,18 +148,30 @@ class LiveStreamManager(
         } else {
             CameraCharacteristics.LENS_FACING_BACK
         }
+        if (requested == cameraFacing) return null
         val error = source.switch(requested, { jpeg -> val s = sink; if (s != null) s(SOURCE_CAMERA, jpeg) })
         return if (error == null) {
             cameraFacing = requested
-            Logger.i("Live camera switched to $requested")
             null
         } else {
             error
         }
     }
 
+    /** Switches camera by toggling front/back. */
+    @Synchronized
+    fun switchCamera(): String? {
+        val target = if (cameraFacing == CameraCharacteristics.LENS_FACING_FRONT) {
+            CameraCharacteristics.LENS_FACING_BACK
+        } else {
+            CameraCharacteristics.LENS_FACING_FRONT
+        }
+        return switchCamera(target)
+    }
+
     @Synchronized
     fun stop() {
+        stopAudio()
         if (activeSource == SOURCE_SCREEN) {
             ScreenCaptureSource.setFrameListener(null, Config.LIVE_FRAME_INTERVAL_MS)
         }
@@ -155,16 +183,50 @@ class LiveStreamManager(
         activeSource = SOURCE_NONE
     }
 
+    private fun startAudio(source: Int) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        stopAudio()
+        try {
+            MonitorService.ensureForegroundType(ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+        } catch (t: Throwable) {
+            Logger.w("Unable to add microphone foreground type", t)
+        }
+        val m = MicCapture(context, source) { src, pcm ->
+            val s = audioSink ?: return@MicCapture
+            try {
+                s(src, pcm)
+            } catch (t: Throwable) {
+                Logger.w("Live audio sink failed", t)
+            }
+        }
+        mic = m
+        m.start()
+        audioEnabled = true
+    }
+
+    private fun stopAudio() {
+        try {
+            mic?.stop()
+        } catch (t: Throwable) {
+        }
+        mic = null
+        audioEnabled = false
+    }
+
     companion object {
         const val SOURCE_NONE = 0
         const val SOURCE_SCREEN = 1
         const val SOURCE_CAMERA = 2
+        const val SOURCE_AUDIO_SCREEN = 3
+        const val SOURCE_AUDIO_CAMERA = 4
     }
 }
 
-/**
- * A repeating camera capture that produces small JPEG frames.
- */
+
 private class CameraLiveSource(
     private val context: Context,
     private val onFatal: (String) -> Unit = {},
@@ -452,5 +514,88 @@ private class CameraLiveSource(
         return affordable.maxByOrNull { it.width.toLong() * it.height }
             ?: sizes.filter { it.width <= 1280 }.minByOrNull { it.width.toLong() * it.height }
             ?: sizes.minByOrNull { it.width.toLong() * it.height }
+    }
+}
+
+
+private class MicCapture(
+    private val context: Context,
+    private val source: Int,
+) {
+    private var thread: HandlerThread? = null
+    private var recorder: AudioRecord? = null
+    @Volatile
+    private var running = false
+    private var onData: ((Int, ByteArray) -> Unit)? = null
+
+    constructor(context: Context, source: Int, onData: (Int, ByteArray) -> Unit) : this(context, source) {
+        this.onData = onData
+    }
+
+    fun start() {
+        if (running) return
+        val sampleRate = Config.LIVE_AUDIO_SAMPLE_RATE
+        val channelConfig = Config.LIVE_AUDIO_CHANNEL_CONFIG
+        val audioFormat = Config.LIVE_AUDIO_ENCODING
+        val minBuf = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
+        val bufSize = ((minBuf * 2).coerceAtLeast(((sampleRate.toLong() * Config.LIVE_AUDIO_BUFFER_MS / 1000) * 2).toInt()))
+        try {
+            val record = AudioRecord(
+                Config.LIVE_AUDIO_SOURCE,
+                sampleRate,
+                channelConfig,
+                audioFormat,
+                bufSize
+            )
+            if (record.state != AudioRecord.STATE_INITIALIZED) {
+                record.release()
+                return
+            }
+            recorder = record
+            running = true
+            val t = HandlerThread("guardian-live-audio").apply { start() }
+            thread = t
+            record.startRecording()
+            val handler = Handler(t.looper)
+            handler.post {
+                val buf = ByteArray(bufSize)
+                while (running) {
+                    val read = try {
+                        record.read(buf, 0, buf.size)
+                    } catch (e: Throwable) {
+                        break
+                    }
+                    if (read > 0) {
+                        val out = ByteArray(read)
+                        System.arraycopy(buf, 0, out, 0, read)
+                        try {
+                            val s = if (source == LiveStreamManager.SOURCE_CAMERA) LiveStreamManager.SOURCE_AUDIO_CAMERA else LiveStreamManager.SOURCE_AUDIO_SCREEN
+                            onData?.invoke(s, out)
+                        } catch (e: Throwable) {
+                        }
+                    } else if (read < 0) {
+                        break
+                    }
+                }
+            }
+        } catch (t: Throwable) {
+            Logger.w("Live audio failed to start", t)
+            stop()
+        }
+    }
+
+    fun stop() {
+        running = false
+        try {
+            recorder?.stop()
+        } catch (t: Throwable) {
+        }
+        try {
+            recorder?.release()
+        } catch (t: Throwable) {
+        }
+        recorder = null
+        thread?.quitSafely()
+        thread = null
     }
 }

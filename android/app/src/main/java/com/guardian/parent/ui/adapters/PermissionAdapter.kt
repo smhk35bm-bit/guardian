@@ -18,6 +18,9 @@ enum class PermissionAction {
     /** Send the user to the matching system settings screen. */
     SETTINGS,
 
+    /** Open the system "notification access" list. */
+    NOTIFICATION_ACCESS,
+
     /** Start or stop the screen capture consent. */
     SCREEN_CAPTURE
 }

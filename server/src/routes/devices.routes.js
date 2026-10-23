@@ -8,6 +8,7 @@ import { config } from '../config.js';
 import { ok, fail, asyncHandler, toInt, toNum, toBool, cleanText, isoOrNow } from '../lib/util.js';
 import { requireParent, requireDevice, requireOwnDevice } from '../middleware/auth.js';
 import { broadcastToUser } from '../realtime.js';
+import { evaluateGeofences } from '../lib/geofence.js';
 
 export const devicesRouter = Router();
 
@@ -310,6 +311,16 @@ devicesRouter.post(
       },
     });
 
+    // Safe-zone crossing is evaluated from the same fix, so the parent is
+    // told about it without an extra round-trip from the phone.
+    await evaluateGeofences({
+      deviceId: req.device.id,
+      userId: req.device.user_id,
+      lat,
+      lng,
+      at,
+    });
+
     return ok(res, { id: lastInsertRowid, at });
   }),
 );
@@ -441,6 +452,38 @@ devicesRouter.post(
       data: { id: lastInsertRowid, at },
     });
     return ok(res, { id: lastInsertRowid });
+  }),
+);
+
+devicesRouter.post(
+  '/:id/contacts',
+  requireDevice,
+  requireOwnDevice,
+  asyncHandler(async (req, res) => {
+    const list = Array.isArray(req.body?.contacts) ? req.body.contacts.slice(0, 5000) : [];
+    const at = nowIso();
+    const items = [];
+    for (const contact of list) {
+      const number = cleanText(contact?.number, 60);
+      if (!number) continue;
+      items.push({
+        sql: `INSERT INTO contacts (device_id, name, number, email, at)
+              VALUES (?, ?, ?, ?, ?)
+              ON CONFLICT(device_id, number) DO UPDATE SET
+                name = excluded.name,
+                email = excluded.email,
+                at = excluded.at`,
+        args: [
+          req.device.id,
+          cleanText(contact?.name, 200),
+          number,
+          cleanText(contact?.email, 200),
+          at,
+        ],
+      });
+    }
+    if (items.length) await q.batch(items);
+    return ok(res, { count: items.length });
   }),
 );
 

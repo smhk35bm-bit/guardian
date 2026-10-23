@@ -139,6 +139,29 @@ class DeviceSocket(
         }
     }
 
+    /** Sends raw audio bytes over the live channel. */
+    fun sendAudio(source: Int, pcm: ByteArray): Boolean {
+        val current = socket ?: return false
+        if (!connected) return false
+        if (current.queueSize() > Config.LIVE_MAX_SEND_QUEUE_BYTES) return false
+        val header = ByteBuffer.allocate(HEADER_SIZE).order(ByteOrder.BIG_ENDIAN)
+        header.put(PROTOCOL_VERSION)
+        header.put(source.toByte())
+        header.putShort(AUDIO_FLAG)
+        header.putInt(sequence.incrementAndGet())
+        header.putInt(pcm.size)
+        val frame = ByteBuffer.allocate(HEADER_SIZE + pcm.size)
+            .order(ByteOrder.BIG_ENDIAN)
+        frame.put(header.array())
+        frame.put(pcm)
+        return try {
+            current.send(frame.array().toByteString())
+        } catch (t: Throwable) {
+            Logger.w("Unable to send a live audio frame", t)
+            false
+        }
+    }
+
     // ------------------------------------------------------------------
     // Internals
     // ------------------------------------------------------------------
@@ -274,5 +297,7 @@ class DeviceSocket(
         /** How long a WebSocket handshake may stay silent before a retry. */
         private const val HANDSHAKE_TIMEOUT_SEC = 20L
         const val HEADER_SIZE = 12
+        const val AUDIO_FLAG: Short = 0x0001
+        const val AUDIO_SOURCE = 3
     }
 }

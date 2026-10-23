@@ -141,6 +141,49 @@ export const SCHEMA_STATEMENTS = [
   at        TEXT NOT NULL
 )`,
   `CREATE INDEX IF NOT EXISTS idx_events_device_at ON events(device_id, at DESC)`,
+
+  // Address book of the child device. The phone number is the natural key:
+  // a repeated sync updates the name instead of duplicating the row.
+  `CREATE TABLE IF NOT EXISTS contacts (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  device_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  name      TEXT,
+  number    TEXT,
+  email     TEXT,
+  at        TEXT NOT NULL
+)`,
+  `CREATE INDEX IF NOT EXISTS idx_contacts_device ON contacts(device_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_unique ON contacts(device_id, number)`,
+
+  // Safe zones. `inside` keeps the last known state so an alert is emitted
+  // only when the child crosses the boundary, not on every location update.
+  `CREATE TABLE IF NOT EXISTS geofences (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  device_id  INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  name       TEXT NOT NULL DEFAULT 'موقع آمن',
+  lat        REAL NOT NULL,
+  lng        REAL NOT NULL,
+  radius_m   INTEGER NOT NULL DEFAULT 200,
+  inside     INTEGER,
+  active     INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL
+)`,
+  `CREATE INDEX IF NOT EXISTS idx_geofences_device ON geofences(device_id)`,
+
+  // One row per event the parent must know about (geofence crossing, SOS…).
+  `CREATE TABLE IF NOT EXISTS alerts (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  device_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  type      TEXT NOT NULL,
+  title     TEXT NOT NULL DEFAULT '',
+  body      TEXT,
+  payload   TEXT,
+  at        TEXT NOT NULL,
+  read_at   TEXT
+)`,
+  `CREATE INDEX IF NOT EXISTS idx_alerts_user_at ON alerts(user_id, at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_alerts_device_at ON alerts(device_id, at DESC)`,
 ];
 
 export const SCHEMA_SQL = `${SCHEMA_STATEMENTS.join(';\n')};`;

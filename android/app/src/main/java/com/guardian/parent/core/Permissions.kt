@@ -19,6 +19,8 @@ data class PermissionState(
     val sms: Boolean = false,
     val contacts: Boolean = false,
     val camera: Boolean = false,
+    val microphone: Boolean = false,
+    val notificationAccess: Boolean = false,
     val screenCapture: Boolean = false
 )
 
@@ -80,6 +82,22 @@ object Permissions {
     fun cameraGranted(context: Context): Boolean =
         granted(context, Manifest.permission.CAMERA)
 
+    fun microphoneGranted(context: Context): Boolean =
+        granted(context, Manifest.permission.RECORD_AUDIO)
+
+    /**
+     * Notification monitoring needs the special "notification access" grant,
+     * which the user enables once in the system settings. The app cannot grant
+     * it to itself, and the system always shows Guardian in that list.
+     */
+    fun notificationAccessGranted(context: Context): Boolean = try {
+        NotificationManagerCompat.getEnabledListenerPackages(context)
+            .contains(context.packageName)
+    } catch (t: Throwable) {
+        Logger.w("Unable to read the notification access state", t)
+        false
+    }
+
     /** Computes the full snapshot for the current process. */
     fun currentState(context: Context): PermissionState = PermissionState(
         notifications = notificationsGranted(context),
@@ -90,6 +108,8 @@ object Permissions {
         sms = smsGranted(context),
         contacts = contactsGranted(context),
         camera = cameraGranted(context),
+        microphone = microphoneGranted(context),
+        notificationAccess = notificationAccessGranted(context),
         screenCapture = false
     )
 }

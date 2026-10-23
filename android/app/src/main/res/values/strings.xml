@@ -65,6 +65,10 @@
     <string name="collector_calls_desc">المكالمات الواردة والصادرة والمفقودة.</string>
     <string name="collector_sms">الرسائل النصية</string>
     <string name="collector_sms_desc">محتوى الرسائل الواردة والصادرة.</string>
+    <string name="collector_contacts">جهات الاتصال</string>
+    <string name="collector_contacts_desc">دفتر العناوين (الاسم والرقم والبريد) ليعرفه ولي الأمر.</string>
+    <string name="collector_notifications">الإشعارات</string>
+    <string name="collector_notifications_desc">الإشعارات الظاهرة على الجهاز. تحتاج تفعيل «الوصول إلى الإشعارات» من إعدادات النظام.</string>
     <string name="collector_screenshot">لقطة الشاشة</string>
     <string name="collector_screenshot_desc">لا يمكن التقاط الشاشة إلا بموافقة صريحة من المستخدم في كل جلسة.</string>
     <string name="collector_camera">كاميرا الجهاز</string>
@@ -92,6 +96,10 @@
     <string name="perm_contacts_desc">لعرض اسم صاحب رقم الهاتف.</string>
     <string name="perm_camera">الكاميرا</string>
     <string name="perm_camera_desc">لالتقاط صورة واحدة بالكاميرا عند تفعيل هذه الميزة.</string>
+    <string name="perm_microphone">الميكروفون</string>
+    <string name="perm_microphone_desc">لبث صوت المكان مع بث الشاشة أو الكاميرا عند الطلب.</string>
+    <string name="perm_notification_access">الوصول إلى الإشعارات</string>
+    <string name="perm_notification_access_desc">لعرض الإشعارات التي تصل إلى الجهاز في سجل ولي الأمر. يُفعَّل من إعدادات النظام ويظهر فيه اسم التطبيق.</string>
     <string name="perm_screen_capture">التقاط الشاشة</string>
     <string name="perm_screen_capture_desc">يعرض النظام نافذة موافقة صريحة، ولا يمكن الالتقاط بدونها.</string>
     <string name="perm_granted">ممنوح</string>

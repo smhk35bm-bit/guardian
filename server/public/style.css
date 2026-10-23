@@ -336,6 +336,7 @@ select { cursor: pointer; }
 }
 .toast.err { border-color: rgba(248, 113, 113, .45); color: #fca5a5; }
 .toast.ok  { border-color: rgba(52, 211, 153, .45); color: #6ee7b7; }
+.toast.warn { border-color: rgba(251, 191, 36, .45); color: #fcd34d; }
 
 /* ------------------------------------------------------------ empty state */
 
@@ -409,4 +410,45 @@ select { cursor: pointer; }
   .topbar { flex-wrap: wrap; gap: .5rem; }
   .who { display: none; }
   .device-head-actions { width: 100%; }
+}
+
+/* ------------------------------------------------- alerts & safe zones */
+
+.tab-badge {
+  display: inline-block;
+  min-width: 1.25rem;
+  padding: 0 .3rem;
+  margin-inline-start: .35rem;
+  border-radius: 999px;
+  background: var(--danger, #e5484d);
+  color: #fff;
+  font-size: .72rem;
+  line-height: 1.25rem;
+  text-align: center;
+}
+
+.alert-item.is-unread {
+  border-inline-start: 3px solid var(--accent, #4f8cff);
+  background: rgba(79, 140, 255, .08);
+}
+
+.geofence-form {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr .8fr auto;
+  gap: .5rem;
+  margin-bottom: 1rem;
+}
+
+.geofence-form input {
+  min-width: 0;
+}
+
+.btn.is-muted {
+  opacity: .65;
+}
+
+@media (max-width: 900px) {
+  .geofence-form { grid-template-columns: 1fr 1fr; }
+  .geofence-form input:first-child { grid-column: 1 / -1; }
+  .geofence-form button { grid-column: 1 / -1; }
 }

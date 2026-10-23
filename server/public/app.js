@@ -15,7 +15,16 @@ const state = {
   ws: null,
   refreshTimer: null,
   enrollTimer: null,
-  live: { source: null, frames: 0, startedAt: 0, pending: false, rateTimer: null, cameraFacing: 'back' },
+  live: {
+    source: null,
+    frames: 0,
+    startedAt: 0,
+    pending: false,
+    rateTimer: null,
+    cameraFacing: 'back',
+    audioMuted: false,
+    audioFrames: 0,
+  },
 };
 
 /* ------------------------------------------------------------- utilities */
@@ -109,7 +118,11 @@ async function api(path, { method = 'GET', body, raw = false } = {}) {
   if (!res.ok || json.ok === false) {
     throw new Error(json?.error?.message || `فشل الطلب (${res.status})`);
   }
-  return json.data ?? json;
+  const data = json.data ?? json;
+  // List endpoints return paging counters in `meta`; hanging them on the array
+  // keeps the call sites simple (`rows.meta.unread`) without a second request.
+  if (Array.isArray(data) && json.meta) data.meta = json.meta;
+  return data;
 }
 
 /* ----------------------------------------------------------------- auth */
@@ -183,6 +196,7 @@ async function enterApp() {
   await loadDevices();
   connectRealtime();
   startAutoRefresh();
+  loadAlerts().catch(() => {});
 }
 
 /* -------------------------------------------------------------- devices */
@@ -268,7 +282,17 @@ function selectDevice(id) {
   renderDeviceList();
   renderDeviceHead();
   refreshActiveTab(true);
-  loadLiveStats();
+  loadAliveStatsSafe();
+  loadAlerts().catch(() => {});
+  $('#ring-stop-btn').hidden = true;
+}
+
+function loadAliveStatsSafe() {
+  try {
+    loadLiveStats();
+  } catch {
+    /* stats are cosmetic */
+  }
 }
 
 /* ------------------------------------------------------------------ map */
@@ -411,7 +435,7 @@ function connectRealtime() {
     }
     if (msg.deviceId && msg.deviceId !== state.currentDeviceId) return;
 
-    if (msg.type === 'live.state') {
+    if (msg.type === 'live.state' || msg.type === 'live.camera') {
       handleLiveState(msg);
       return;
     }
@@ -421,6 +445,31 @@ function connectRealtime() {
         updateMarker(currentDevice());
         loadLiveStats();
       });
+      return;
+    }
+
+    if (msg.type === 'device.alert') {
+      toast(msg.data?.title || 'تنبيه جديد', 'warn');
+      loadAlerts().catch(() => {});
+      if (state.activeTab === 'geofences') loadGeofences().catch(() => {});
+      return;
+    }
+
+    if (msg.type === 'device.command.result') {
+      // The server's first message is only a delivery receipt for a command
+      // that is still in flight; the device's own result is the final one.
+      if (msg.pending) return;
+      if (msg.action === 'alarm') {
+        if (msg.ok) {
+          toast('الجهاز يرن الآن', 'ok');
+          $('#ring-stop-btn').hidden = false;
+        } else {
+          toast(LIVE_ERRORS[msg.error] || 'تعذّر تشغيل الرنين', 'err');
+        }
+      } else if (msg.action === 'stop_alarm' && msg.ok) {
+        toast('تم إيقاف الرنين', 'ok');
+        $('#ring-stop-btn').hidden = true;
+      }
     }
   });
 }
@@ -477,6 +526,8 @@ function startLive(source) {
   state.live.source = source;
   state.live.frames = 0;
   state.live.startedAt = Date.now();
+  // The click is the user gesture the browser needs before it may play audio.
+  ensureAudioContext();
   if (source === 'camera') {
     state.live.cameraFacing = 'back';
   }
@@ -491,7 +542,7 @@ function startLive(source) {
 function requestLive(source) {
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
   state.ws.send(
-    JSON.stringify({ type: 'live.start', deviceId: state.currentDeviceId, source }),
+    JSON.stringify({ type: 'live.start', deviceId: state.currentDeviceId, source, audio: true }),
   );
 }
 
@@ -564,24 +615,100 @@ function handleLiveState(msg) {
 }
 
 /**
- * One binary frame: [ver:1][source:1][flags:2][deviceId:4][seq:4][length:4] + JPEG.
+ * One binary frame: [ver:1][source:1][flags:2][deviceId:4][seq:4][length:4] + payload.
+ * The payload is a JPEG when `flags` has no audio bit, and raw PCM when it has.
  * Frames are decoded only while the live tab is visible, and never queued.
  */
 function handleLiveFrame(buffer) {
   if (buffer.byteLength <= 16) return;
   const view = new DataView(buffer);
   if (view.getUint8(0) !== 1) return;
-  const source = view.getUint8(1);
-  if (source !== 1 && source !== 2) return;
   if (view.getUint32(4) !== state.currentDeviceId) return;
-  if (!state.live.source || state.activeTab !== 'live') return;
+
+  const source = view.getUint8(1);
+  const flags = view.getUint16(2);
+  const isAudio = (flags & 0x0001) === 0x0001;
   const length = view.getUint32(12);
   if (!length || 16 + length > buffer.byteLength) return;
+
+  if (isAudio) {
+    if (!state.live.source) return;
+    state.live.audioFrames += 1;
+    playPcm16(buffer, 16, length);
+    return;
+  }
+
+  if (source !== 1 && source !== 2) return;
+  if (!state.live.source || state.activeTab !== 'live') return;
   if (state.live.pending) return;
 
   state.live.pending = true;
   state.live.frames += 1;
   drawLiveFrame(new Blob([new Uint8Array(buffer, 16, length)], { type: 'image/jpeg' }));
+}
+
+/* ------------------------------------------------------- live audio (PCM) */
+
+/**
+ * Plays the microphone of the child device.
+ *
+ * The device sends 16-bit mono PCM at 16 kHz; the browser turns each chunk
+ * into a short AudioBuffer and schedules it back to back. When the network
+ * hiccups the scheduler jumps forward instead of accumulating delay, so what
+ * the parent hears stays close to real time.
+ */
+const liveAudio = { ctx: null, nextTime: 0 };
+
+function ensureAudioContext() {
+  try {
+    if (!liveAudio.ctx) {
+      const Ctor = window.AudioContext || window.webkitAudioContext;
+      if (!Ctor) return null;
+      liveAudio.ctx = new Ctor();
+    }
+    if (liveAudio.ctx.state === 'suspended') {
+      liveAudio.ctx.resume().catch(() => {});
+    }
+    return liveAudio.ctx;
+  } catch {
+    return null;
+  }
+}
+
+function playPcm16(buffer, offset, length) {
+  if (state.live.audioMuted || length < 2) return;
+  const ctx = ensureAudioContext();
+  if (!ctx) return;
+
+  const samples = Math.floor(length / 2);
+  const audioBuffer = ctx.createBuffer(1, samples, 16000);
+  const out = audioBuffer.getChannelData(0);
+  const view = new DataView(buffer, offset, length);
+  for (let index = 0; index < samples; index += 1) {
+    out[index] = view.getInt16(index * 2, true) / 32768;
+  }
+
+  const source = ctx.createBufferSource();
+  source.buffer = audioBuffer;
+  source.connect(ctx.destination);
+
+  const now = ctx.currentTime;
+  if (liveAudio.nextTime < now + 0.01 || liveAudio.nextTime > now + 0.75) {
+    liveAudio.nextTime = now + 0.05;
+  }
+  source.start(liveAudio.nextTime);
+  liveAudio.nextTime += audioBuffer.duration;
+}
+
+function toggleLiveAudio() {
+  state.live.audioMuted = !state.live.audioMuted;
+  liveAudio.nextTime = 0;
+  const button = $('#live-audio-toggle');
+  if (button) {
+    button.textContent = state.live.audioMuted ? 'الصوت: مكتوم' : 'الصوت: مفعّل';
+    button.classList.toggle('is-muted', state.live.audioMuted);
+  }
+  if (!state.live.audioMuted) ensureAudioContext();
 }
 
 async function drawLiveFrame(blob) {
@@ -663,6 +790,21 @@ $('#live-camera-btn').addEventListener('click', () => startLive('camera'));
 const liveSwitch = $('#live-camera-switch-btn');
 if (liveSwitch) liveSwitch.addEventListener('click', switchCamera);
 $('#live-stop-btn').addEventListener('click', () => stopLive());
+$('#live-audio-toggle').addEventListener('click', toggleLiveAudio);
+
+/* ------------------------------------------------------- device commands */
+
+function sendDeviceCommand(action) {
+  if (!state.currentDeviceId) return;
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+    toast('قناة التحكم غير متصلة، انتظر لحظة ثم أعد المحاولة', 'err');
+    return;
+  }
+  state.ws.send(JSON.stringify({ type: 'device.command', deviceId: state.currentDeviceId, action }));
+}
+
+$('#ring-btn').addEventListener('click', () => sendDeviceCommand('alarm'));
+$('#ring-stop-btn').addEventListener('click', () => sendDeviceCommand('stop_alarm'));
 
 /* --------------------------------------------------------------- tabs */
 
@@ -691,6 +833,7 @@ async function refreshActiveTab(force = false) {
         ensureMap();
         updateMarker(currentDevice());
         await loadTrail();
+        await loadGeofences();
         break;
       }
       case 'stats':
@@ -713,6 +856,15 @@ async function refreshActiveTab(force = false) {
         break;
       case 'apps':
         await loadApps();
+        break;
+      case 'alerts':
+        await loadAlerts();
+        break;
+      case 'geofences':
+        await loadGeofences();
+        break;
+      case 'contacts':
+        await loadContacts();
         break;
       default:
         break;
@@ -931,6 +1083,196 @@ async function loadApps() {
     .join('');
 }
 
+/* -------------------------------------------------- alerts & safe zones */
+
+async function loadAlerts() {
+  const rows = await api(`/api/alerts?limit=100`);
+  const list = $('#alerts-list');
+  const badge = $('#alerts-badge');
+  const unread = Number(rows?.meta?.unread ?? 0);
+  if (badge) {
+    badge.textContent = String(unread);
+    badge.hidden = unread === 0;
+  }
+  if (!list) return;
+  if (!rows || rows.length === 0) {
+    list.innerHTML =
+      '<div class="empty"><span class="big">🔔</span>لا توجد تنبيهات بعد. ستظهر هنا عند دخول الطفل إلى موقع آمن أو خروجه منه.</div>';
+    return;
+  }
+  list.innerHTML = rows
+    .map(
+      (a) => `
+      <div class="row-item alert-item${a.read ? '' : ' is-unread'}">
+        <div class="icon">${a.type === 'geofence_enter' ? '🟢' : a.type === 'geofence_exit' ? '🟠' : '🔔'}</div>
+        <div class="body">
+          <div class="title">${esc(a.title)}</div>
+          <div class="sub">${esc(a.body || '')}</div>
+        </div>
+        <div class="when">${relTime(a.at)}</div>
+      </div>`,
+    )
+    .join('');
+}
+
+async function markAllAlertsRead() {
+  try {
+    await api('/api/alerts/read', { method: 'POST', body: { ids: [] } });
+    await loadAlerts();
+    toast('تم تعليم كل التنبيهات كمقروءة', 'ok');
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
+
+/** Draws every safe zone as a circle on the map (no-op before the map exists). */
+function drawGeofences(rows) {
+  if (!state.map) return;
+  if (!state.geoLayer) {
+    state.geoLayer = L.layerGroup().addTo(state.map);
+  }
+  state.geoLayer.clearLayers();
+  for (const fence of rows) {
+    L.circle([Number(fence.lat), Number(fence.lng)], {
+      radius: Number(fence.radius_m),
+      color: '#4f8cff',
+      weight: 2,
+      fillColor: '#4f8cff',
+      fillOpacity: 0.08,
+    })
+      .bindTooltip(fence.name, { permanent: false, direction: 'top' })
+      .addTo(state.geoLayer);
+  }
+}
+
+async function loadGeofences() {
+  const rows = await api(`/api/devices/${state.currentDeviceId}/geofences`);
+  drawGeofences(rows || []);
+  const list = $('#geofences-list');
+  if (!list) return;
+  if (!rows || rows.length === 0) {
+    list.innerHTML =
+      '<div class="empty"><span class="big">📍</span>لا توجد مواقع آمنة. أضف المنزل أو المدرسة ليصلك تنبيه عند الدخول والخروج.</div>';
+    return;
+  }
+  list.innerHTML = rows
+    .map((g) => {
+      const stateLabel =
+        g.inside === null || g.inside === undefined
+          ? 'بانتظار أول تحديث موقع'
+          : Number(g.inside) === 1
+            ? 'داخل الموقع'
+            : 'خارج الموقع';
+      return `
+      <div class="row-item">
+        <div class="icon">📍</div>
+        <div class="body">
+          <div class="title">${esc(g.name)}</div>
+          <div class="sub">نصف القطر ${g.radius_m} م — ${stateLabel}</div>
+          <div class="sub" dir="ltr" style="text-align:right">${Number(g.lat).toFixed(5)}, ${Number(g.lng).toFixed(5)}</div>
+        </div>
+        <div>
+          <button class="btn btn-ghost btn-sm" data-geofence-center="${g.id}">عرض</button>
+          <button class="btn btn-danger btn-sm" data-geofence-delete="${g.id}">حذف</button>
+        </div>
+      </div>`;
+    })
+    .join('');
+
+  list.querySelectorAll('[data-geofence-delete]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      try {
+        await api(`/api/devices/${state.currentDeviceId}/geofences/${button.dataset.geofenceDelete}`, {
+          method: 'DELETE',
+        });
+        await loadGeofences();
+        toast('تم حذف الموقع', 'ok');
+      } catch (err) {
+        toast(err.message, 'err');
+      }
+    });
+  });
+
+  list.querySelectorAll('[data-geofence-center]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const fence = rows.find((g) => String(g.id) === button.dataset.geofenceCenter);
+      if (!fence) return;
+      const mapTab = $$('.tab').find((t) => t.dataset.tab === 'map');
+      if (mapTab) mapTab.click();
+      setTimeout(() => {
+        const map = ensureMap();
+        map.invalidateSize();
+        map.setView([Number(fence.lat), Number(fence.lng)], 16);
+      }, 60);
+    });
+  });
+}
+
+async function createGeofence(event) {
+  event.preventDefault();
+  const name = $('#geofence-name').value.trim();
+  const lat = Number($('#geofence-lat').value);
+  const lng = Number($('#geofence-lng').value);
+  const radiusM = Number($('#geofence-radius').value || 200);
+  if (!name || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+    toast('أدخل اسماً وإحداثيات صحيحة', 'err');
+    return;
+  }
+  try {
+    await api(`/api/devices/${state.currentDeviceId}/geofences`, {
+      method: 'POST',
+      body: { name, lat, lng, radiusM },
+    });
+    $('#geofence-form').reset();
+    $('#geofence-radius').value = '200';
+    await loadGeofences();
+    toast('تمت إضافة الموقع الآمن', 'ok');
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
+
+function useCurrentLocationForGeofence() {
+  const device = currentDevice();
+  const loc = device?.location;
+  if (!loc) {
+    toast('لا يوجد موقع حديث لهذا الجهاز بعد', 'err');
+    return;
+  }
+  $('#geofence-lat').value = String(loc.lat);
+  $('#geofence-lng').value = String(loc.lng);
+  toast('تم تعبئة الإحداثيات من آخر موقع معروف', 'ok');
+}
+
+/* -------------------------------------------------------------- contacts */
+
+async function loadContacts() {
+  const search = $('#contacts-search')?.value.trim() || '';
+  const query = search ? `?q=${encodeURIComponent(search)}&limit=5000` : '?limit=5000';
+  const rows = await api(`/api/devices/${state.currentDeviceId}/contacts${query}`);
+  const list = $('#contacts-list');
+  if (!list) return;
+  if (!rows || rows.length === 0) {
+    list.innerHTML =
+      '<div class="empty"><span class="big">👥</span>لم تصل جهات الاتصال بعد. تأكد من منح إذن جهات الاتصال على هاتف الطفل.</div>';
+    return;
+  }
+  list.innerHTML = rows
+    .map(
+      (c) => `
+      <div class="row-item">
+        <div class="icon">👤</div>
+        <div class="body">
+          <div class="title">${esc(c.name || 'بدون اسم')}</div>
+          <div class="sub" dir="ltr" style="text-align:right">${esc(c.number || '')}</div>
+          ${c.email ? `<div class="sub" dir="ltr" style="text-align:right">${esc(c.email)}</div>` : ''}
+        </div>
+        <div class="when">${c.at ? relTime(c.at) : ''}</div>
+      </div>`,
+    )
+    .join('');
+}
+
 /* ------------------------------------------------------- enroll modal */
 
 async function openEnrollModal() {
@@ -1021,6 +1363,16 @@ $('#hide-system-apps')?.addEventListener('change', () => loadApps());
 $('#follow-toggle')?.addEventListener('change', () => updateMarker(currentDevice()));
 $('#trail-toggle')?.addEventListener('change', () => loadTrail());
 $('#trail-range')?.addEventListener('change', () => loadTrail());
+$('#alerts-read-all')?.addEventListener('click', () => markAllAlertsRead());
+$('#geofence-form')?.addEventListener('submit', createGeofence);
+$('#geofence-use-current')?.addEventListener('click', () => useCurrentLocationForGeofence());
+let contactsSearchTimer = null;
+$('#contacts-search')?.addEventListener('input', () => {
+  clearTimeout(contactsSearchTimer);
+  contactsSearchTimer = setTimeout(() => {
+    loadContacts().catch((err) => toast(err.message, 'err'));
+  }, 300);
+});
 
 /* ----------------------------------------------------------------- boot */
 
